@@ -103,6 +103,67 @@ class RoundaboutTraffic(unittest.TestCase):
         self.assertEqual([r[0] for r in props], [furniture.G_YIELD])
 
 
+class PrioritySignByCountry(unittest.TestCase):
+    """The minor arm of a priority junction: GIVE WAY in the British Isles (TSRGD diagram 602; 601.1 STOP needs the
+    authority's special authorisation), STOP where the MUTCD applies."""
+
+    def tee(self):
+        major = roads.Spec(7.0, "paved", False, "primary", True)
+        minor = roads.Spec(5.0, "paved", False, "residential", True)
+        p = np.zeros(3)
+        return [("maj_n", major, np.array([0.0, 1.0]), p, True, 80),
+                ("maj_s", major, np.array([0.0, -1.0]), p, False, 80),
+                ("min_e", minor, np.array([1.0, 0.0]), p, False, 60)]
+
+    def controls(self, country):
+        got = furniture.junction_controls(self.tee(), None, signals=np.zeros((0, 2)), country=country)
+        return [(a[0], kind) for a, kind in got]
+
+    def test_uk_minor_arm_gives_way(self):
+        for c in ("GB", "gb", "IE", "IM", "JE", "GG"):
+            with self.subTest(country=c):
+                self.assertEqual(self.controls(c), [("min_e", furniture.G_YIELD)])
+
+    def test_mutcd_countries_keep_the_stop_sign(self):
+        for c in (None, "US", "CA", "DE"):
+            with self.subTest(country=c):
+                self.assertEqual(self.controls(c), [("min_e", furniture.G_STOP)])
+
+    def test_minor_t_stem_and_four_way_follow_the_country(self):
+        minor = roads.Spec(5.0, "paved", False, "residential", True)
+        p = np.zeros(3)
+        stem = [("a", minor, np.array([0.0, 1.0]), p, True, 60),
+                ("b", minor, np.array([0.0, -1.0]), p, False, 60),
+                ("c", minor, np.array([1.0, 0.0]), p, False, 60)]
+        kinds = {k for _, k in furniture.junction_controls(stem, None, signals=np.zeros((0, 2)), country="GB")}
+        self.assertEqual(kinds, {furniture.G_YIELD})
+
+    def test_signal_keeps_right_hand_geometry_so_its_head_faces_the_traffic(self):
+        """The stock boom is a one-sided shape: mirrored for left-hand traffic its head turns away from the drivers
+        it controls. Signals keep the right-hand placement (mast on the offside); signs still swap kerbs."""
+        def arm(fid, cls, dx, dy, c=(100.0, 100.0)):
+            pts = np.array([(c[0], c[1], 0.0), (c[0] + dx * 80, c[1] + dy * 80, 0.0)])
+            return (fid, roads.Spec(10.0, "paved", True, cls, False), pts, 0.0)
+
+        cross = [arm(f"a{i}", "tertiary", dx, dy) for i, (dx, dy) in enumerate([(1, 0), (-1, 0), (0, 1), (0, -1)])]
+        rhd = sorted(furniture.junction_props(cross, (0, 0, 256, 256), left_hand=False))
+        lhd = sorted(furniture.junction_props(cross, (0, 0, 256, 256), left_hand=True))
+        self.assertEqual([r[0] for r in rhd], [furniture.G_SIGNAL] * 4)
+        self.assertEqual(rhd, lhd, "a signal stands and faces the same way whichever side traffic drives on")
+
+        tee = [arm("maj_n", "primary", 0, 1), arm("maj_s", "primary", 0, -1), arm("min_e", "residential", 1, 0)]
+        sides = [furniture.junction_props(tee, (0, 0, 256, 256), left_hand=lh, signals=np.zeros((0, 2)),
+                                          country="GB")[0] for lh in (False, True)]
+        self.assertEqual([r[0] for r in sides], [furniture.G_YIELD] * 2)
+        self.assertNotEqual(sides[0][2], sides[1][2], "a give-way sign still swaps to the near kerb")
+
+    def test_give_way_junctions_install_no_stop_controller_for_the_ai(self):
+        """navgraph drops G_YIELD, so UK traffic yields on edge priority instead of halting at every side road."""
+        put = [(a, k) for a, k in furniture.junction_controls(self.tee(), None, signals=np.zeros((0, 2)),
+                                                              country="GB") if k != furniture.G_YIELD]
+        self.assertEqual(put, [])
+
+
 class NarrowAndCurvedStreets(unittest.TestCase):
     def test_close_buildings_produce_a_narrow_street_without_overlapping_sidewalks(self):
         for row in (4.2, 6.0, 8.0, 18.0):

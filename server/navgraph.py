@@ -164,7 +164,7 @@ def _deck_z(decks, fid, x, y):
 
 
 def build(frame, feats_list, elev, centre, urban_fn=None, window=WINDOW_M, decks=None, widths=None, left_hand=False,
-          mph=True, signals=None):
+          mph=True, signals=None, country=None):
     """{"nodes": {name: [x, y, z, radius]}, "edges": [[in, out, oneway, lanes_out, lanes_in, speed m/s,
     drivability, radius]]} of the drivable roads in the square of half size `window` around centre (x, y) of
     the anchor frame. feats_list: the "roads" mapgeom.Features of the cells around (duplicates across cells
@@ -360,7 +360,7 @@ def build(frame, feats_list, elev, centre, urban_fn=None, window=WINDOW_M, decks
                 radius[nm] = max(radius.get(nm, 0.0), e[7])
         for nm, x, y, z in zip(used, X, Y, Z):
             nodes[nm] = [round(float(x), 2), round(float(y), 2), round(float(z), 2), radius[nm]]
-    signals = _signals(prop_arms, approaches, nodes, left_hand, set(ring), carriage, signals)
+    signals = _signals(prop_arms, approaches, nodes, left_hand, set(ring), carriage, signals, country)
     # one edge per node pair (two segments joining the same connectors: keep the first)
     uniq, pairs = [], set()
     for e in edges:
@@ -378,12 +378,14 @@ STOP_BACK_M = 2.0           # the stop point: this far before the junction's wid
 SHORT_APPROACH_M = 15.0
 
 
-def _signals(arms, approaches, nodes, left_hand=False, ring=None, lines=(), signals=None):
+def _signals(arms, approaches, nodes, left_hand=False, ring=None, lines=(), signals=None, country=None):
     """[{"j": junction node, "kind": "signal" | "stop", "app": [[approach node, x, y, z, dir x, dir y, phase, prop x,
     prop y, prop z, prop yaw]]}] of the urban junctions furniture.junction_controls controls, decided on the arms
     the road tiles' props see (arms) and built for the graph's approaches into them (approaches): per incoming
     approach its stop point on the kerb-side half of the lane (where the AI's closest-edge search finds that
-    approach), the travel direction, the phase (0 / 1, by the approach's axis) and the head's prop transform."""
+    approach), the travel direction, the phase (0 / 1, by the approach's axis) and the head's prop transform.
+    country (ISO 3166-1 alpha-2): in the give-way countries (furniture.GIVE_WAY_COUNTRIES) a priority junction's
+    minor arm is signed GIVE WAY, so it drops out here and the AI yields on edge priority instead of stopping."""
     import furniture
     out = []
     # furniture's arm tuples (fid, spec, u, point, at its start, length): the same decision as the road tiles' props
@@ -394,7 +396,7 @@ def _signals(arms, approaches, nodes, left_hand=False, ring=None, lines=(), sign
         if name not in nodes or len(a) < 3 or not furniture._controlled_here(farms[name], signals):
             continue
         put = [(arm, what) for arm, what in furniture.junction_controls(farms[name], None, link_ok, ring=ring,
-                                                                         signals=signals)
+                                                                         signals=signals, country=country)
                if what != furniture.G_YIELD]    # give-way uses edge priority; a stop controller would force a stop
         if not put:
             continue
