@@ -415,6 +415,20 @@ def prop_side(u, what, left_hand=False):
     return -right if left_hand and what != G_SIGNAL else right
 
 
+def junction_spot(c, u, what, wide, half, lines, left_hand=False):
+    """(point, yaw) of an approach's junction prop (signal_spot's arguments; what: G_SIGNAL, G_STOP or G_YIELD), or
+    None when nowhere is clear: on prop_side's kerb, turned to it. A signal in left-hand traffic whose offside kerb is
+    not clear (a dual carriageway's central reservation, the opposite carriageway beside it: 5 of 13 heads of a
+    Basildon junction were dropped, 2026-11-01) stands on the nearside kerb, its primary signal's (TSRGD 2016
+    Schedule 14), turned the same way, so its head still faces the drivers coming in. Shared by junction_props and
+    navgraph._signals."""
+    side = prop_side(u, what, left_hand)
+    q = signal_spot(c, u, side, wide, half, lines)
+    if q is None and what == G_SIGNAL and left_hand:
+        q = signal_spot(c, u, -side, wide, half, lines)
+    return None if q is None else (q, _yaw(side[0], side[1]))
+
+
 def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=None, country=None):
     """Signals at the junctions with a mapped traffic signal (signals: mapped_signals'; None: at urban junctions of
     two or more major roads), priority signs at urban junctions
@@ -442,12 +456,12 @@ def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=N
             continue
         wide = max(a[1].width for a in arms) / 2
         for (fid, spec, u, c, *_), what in put:
-            right = prop_side(u, what, left_hand)     # the side the prop stands on, facing the incoming drivers
-            q = signal_spot(c, u, right, wide, spec.width / 2, lines)
-            if q is None or not (x0 - 20 <= q[0] < x1 + 20 and y0 - 20 <= q[1] < y1 + 20):
+            spot = junction_spot(c, u, what, wide, spec.width / 2, lines, left_hand)    # facing the incoming drivers
+            if spot is None or not (x0 - 20 <= spot[0][0] < x1 + 20 and y0 - 20 <= spot[0][1] < y1 + 20):
                 continue
+            q, yaw = spot
             rows.append([what, round(float(q[0]), 2), round(float(q[1]), 2), round(float(c[2] + curb_h), 2),
-                         round(_yaw(right[0], right[1]), 1), 1.0, 9.4 if what == G_SIGNAL else 3.0, 0.0])
+                         round(yaw, 1), 1.0, 9.4 if what == G_SIGNAL else 3.0, 0.0])
     return rows
 
 

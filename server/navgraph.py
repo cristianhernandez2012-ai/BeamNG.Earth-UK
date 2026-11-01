@@ -420,12 +420,12 @@ def _signals(arms, approaches, nodes, left_hand=False, ring=None, lines=(), sign
             phase = 0 if abs(float(u @ axis)) > 0.7 else 1
             # the head's prop where furniture.junction_props stands it (the switchable stock boom replaces it); none
             # where no spot is clear of the carriageways (no prop there either)
-            # (the head's kerb: furniture.prop_side, the right-hand one for a signal in left-hand traffic too; with
-            # the stop point's side the boom turned 180 degrees and faced away from its drivers, Basildon 2026-11-01)
-            side = furniture.prop_side(u, furniture.G_SIGNAL if kind == "signal" else furniture.G_STOP, left_hand)
-            pp = furniture.signal_spot(np.array([jx, jy]), u, side, wide, spec.width / 2, lines)
-            head = [None] * 4 if pp is None else [round(float(pp[0]), 2), round(float(pp[1]), 2), round(jz + 0.15, 2),
-                                                  round(furniture._yaw(side[0], side[1]), 1)]
+            # (the head's kerb and yaw: furniture.junction_spot, the props' own; with the stop point's side the boom
+            # turned 180 degrees in left-hand traffic and faced away from its drivers, Basildon 2026-11-01)
+            spot = furniture.junction_spot(np.array([jx, jy]), u, furniture.G_SIGNAL if kind == "signal"
+                                           else furniture.G_STOP, wide, spec.width / 2, lines, left_hand)
+            head = [None] * 4 if spot is None else [round(float(spot[0][0]), 2), round(float(spot[0][1]), 2),
+                                                    round(jz + 0.15, 2), round(spot[1], 1)]
             app.append([nb, round(float(q[0]), 2), round(float(q[1]), 2), round(jz, 2),
                         round(float(inc[0]), 4), round(float(inc[1]), 4), phase] + head)
         if app:

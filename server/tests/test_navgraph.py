@@ -167,6 +167,21 @@ class SignalsTest(unittest.TestCase):
             self.assertLess(float(stop_r @ left), 0.0, "right-hand traffic stops in the right-hand lane")
             self.assertGreater(float(stop_l @ left), 0.0, "left-hand traffic stops in the left-hand lane")
 
+    def test_left_hand_signal_falls_back_to_the_nearside_kerb_facing_the_same_way(self):
+        """A dual carriageway's offside is its central reservation: no clear spot there, the head stands on the nearside
+        kerb, still turned to face the drivers (5 of 13 heads of a Basildon junction were dropped, 2026-11-01)."""
+        import furniture
+        u = np.array([1.0, 0.0])                            # traffic comes in heading west; its offside is north
+        other = [(4.0, np.array([[-50.0, 9.0], [80.0, 9.0]]))]     # the opposite carriageway, north of it
+        own = [(4.0, np.array([[0.0, 0.0], [80.0, 0.0]]))]
+        q, yaw = furniture.junction_spot(np.zeros(2), u, furniture.G_SIGNAL, 4.0, 4.0, own + other, left_hand=True)
+        self.assertLess(q[1], 0.0, "on the nearside (south) kerb")
+        self.assertAlmostEqual(yaw, furniture._yaw(0.0, 1.0), msg="turned as on the offside: facing the drivers")
+        q2, _ = furniture.junction_spot(np.zeros(2), u, furniture.G_SIGNAL, 4.0, 4.0, own, left_hand=True)
+        self.assertGreater(q2[1], 0.0, "the offside when it is clear")
+        self.assertIsNone(furniture.junction_spot(np.zeros(2), u, furniture.G_SIGNAL, 4.0, 4.0, own + other),
+                          "right-hand traffic: unchanged (no fallback)")
+
     def test_prop_side(self):
         import furniture
         u = np.array([1.0, 0.0])            # an arm going east: its traffic comes in heading west
