@@ -137,6 +137,45 @@ class SignalsTest(unittest.TestCase):
         got = {ap[0] for ap in out[0]["app"]}
         self.assertEqual(got, {"s1", "cW", "cE"}, "the 8 m link from the next connector gets no stop")
 
+    def test_signal_heads_face_their_drivers_in_left_hand_traffic(self):
+        """The switchable boom keeps its right-hand spot and yaw where traffic drives on the left (furniture.prop_side:
+        mirrored, it turned 180 degrees and faced away from its drivers, Basildon 2026-11-01), while the stop point
+        moves to the left-hand lane."""
+        import roads
+        import furniture
+        sp = roads.Spec(8.0, "paved", True, "residential", False)
+        nodes = {"cJ": [0.0, 0.0, 0.0, 4], "cN": [0.0, 40.0, 0.0, 2], "cS": [0.0, -40.0, 0.0, 2],
+                 "cW": [-40.0, 0.0, 0.0, 2], "cE": [40.0, 0.0, 0.0, 2]}
+        arms = {"cJ": [("n", sp, np.array([0.0, 1.0]), 0.0, 1), ("s", sp, np.array([0.0, -1.0]), 0.0, 0),
+                       ("w", sp, np.array([-1.0, 0.0]), 0.0, 1), ("e", sp, np.array([1.0, 0.0]), 0.0, 0)]}
+        approaches = {("cJ", "n", 1): ("cN", True), ("cJ", "s", 0): ("cS", True), ("cJ", "w", 1): ("cW", True),
+                      ("cJ", "e", 0): ("cE", True)}
+        orig = furniture.junction_controls
+        furniture.junction_controls = lambda a, k, link_ok=None, ring=None, signals=None, country=None: \
+            [(x, furniture.G_SIGNAL) for x in a]
+        try:
+            rhd, lhd = (navgraph._signals(arms, approaches, nodes, left_hand=lh)[0]["app"] for lh in (False, True))
+        finally:
+            furniture.junction_controls = orig
+        self.assertEqual(len(rhd), 4)
+        for r, l in zip(sorted(rhd), sorted(lhd)):
+            self.assertIsNotNone(r[7])
+            self.assertEqual(r[7:], l[7:], "the head stands and faces the same way whichever side traffic drives on")
+            inc = np.array(r[4:6])
+            stop_r, stop_l = np.array(r[1:3]), np.array(l[1:3])
+            left = np.array([-inc[1], inc[0]])
+            self.assertLess(float(stop_r @ left), 0.0, "right-hand traffic stops in the right-hand lane")
+            self.assertGreater(float(stop_l @ left), 0.0, "left-hand traffic stops in the left-hand lane")
+
+    def test_prop_side(self):
+        import furniture
+        u = np.array([1.0, 0.0])            # an arm going east: its traffic comes in heading west
+        north, south = np.array([0.0, 1.0]), np.array([0.0, -1.0])
+        self.assertTrue(np.allclose(furniture.prop_side(u, furniture.G_STOP), north), "a sign on the driver's right")
+        self.assertTrue(np.allclose(furniture.prop_side(u, furniture.G_YIELD, True), south), "... on the left in GB")
+        for lh in (False, True):
+            self.assertTrue(np.allclose(furniture.prop_side(u, furniture.G_SIGNAL, lh), north))
+
 
 class RulesTest(unittest.TestCase):
     def test_default_speeds_by_country(self):

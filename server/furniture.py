@@ -397,6 +397,24 @@ def signal_spot(c, u, right, wide, half, lines):
     return _off_carriageways(c, u, right, wide + 2.5, half + 1.0, near)
 
 
+def prop_side(u, what, left_hand=False):
+    """The unit vector from an approach's centre line to the kerb its junction prop stands on (and the yaw it turns to:
+    _yaw of it). u: the arm's unit vector away from the junction (traffic comes in along -u). Signs stand on the near
+    kerb: the approach's right, its left where traffic drives on the left. A signal (G_SIGNAL) stands on the right
+    either way: the stock boom (trees.lua SIGNAL_STOCK, navgraph.lua SIGNAL_SHAPE) is modelled for right-hand
+    traffic, the mast on the approach's right and the arm reaching left over the carriageway, the head facing the
+    drivers coming in. Mirrored for left-hand traffic it turns 180 degrees: the mast swaps kerbs so the arm still
+    crosses the road, but the head faces away from the traffic it controls (Basildon, 2026-11-01, "el semaforo esta al
+    reves"). A z-rotation cannot fix both on a one-sided model, and the only shapes with switchable lamps are this
+    boom (the lamps light by instance colour through instanced_trafficlight; the pole-mounted trafficlight_city1 and
+    italy_traffic_light_* carry a plain unlit trafficlight material: a readable signal traded for a dead one). So in
+    left-hand countries the mast stands on the offside, where British junctions carry a secondary head anyway.
+    Shared by junction_props (the static props) and navgraph._signals (the switchable heads): one decision, one spot."""
+    inc = -np.asarray(u, np.float64)
+    right = np.array([inc[1], -inc[0]])
+    return -right if left_hand and what != G_SIGNAL else right
+
+
 def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=None, country=None):
     """Signals at the junctions with a mapped traffic signal (signals: mapped_signals'; None: at urban junctions of
     two or more major roads), priority signs at urban junctions
@@ -424,21 +442,7 @@ def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=N
             continue
         wide = max(a[1].width for a in arms) / 2
         for (fid, spec, u, c, *_), what in put:
-            # the approach comes in along -u; its right is (-u_y, u_x)... rotated: right of travel (-u)
-            inc = -u
-            right = np.array([inc[1], -inc[0]]) * (-1 if left_hand else 1)     # the kerb side of the approach
-            if what == G_SIGNAL and left_hand:
-                # The stock boom (trees.lua SIGNAL_STOCK, navgraph.lua SIGNAL_SHAPE) is modelled for right-hand
-                # traffic: the mast stands on the approach's right and the arm reaches left over the carriageway,
-                # with the head facing the drivers coming in. Mirroring the whole prop for left-hand traffic turns
-                # it 180 degrees: the mast swaps kerbs so the arm still crosses the road, but the head then faces
-                # away from the traffic it controls (reported in Basildon, 2026-11-01, "el semaforo esta al reves").
-                # A z-rotation cannot fix both on a one-sided model, and the only shapes with switchable lamps are
-                # this boom (the lamps light by instance colour through instanced_trafficlight; the pole-mounted
-                # trafficlight_city1 and italy_traffic_light_* carry a plain unlit trafficlight material, so
-                # swapping them in would trade a readable signal for a dead one). So a signal keeps the right-hand
-                # geometry and its mast stands on the offside, where UK junctions carry a secondary head anyway.
-                right = np.array([inc[1], -inc[0]])
+            right = prop_side(u, what, left_hand)     # the side the prop stands on, facing the incoming drivers
             q = signal_spot(c, u, right, wide, spec.width / 2, lines)
             if q is None or not (x0 - 20 <= q[0] < x1 + 20 and y0 - 20 <= q[1] < y1 + 20):
                 continue
