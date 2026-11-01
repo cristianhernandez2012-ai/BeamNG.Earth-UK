@@ -293,7 +293,7 @@ def _near_node_pairs(pos, radius):
 
 
 def find(roads, has_walk, walk_w, parking_m=0.0, has_parking=lambda spec: False, debug=None, pavement=False,
-         pavement_bounds=None):
+         pavement_bounds=None, left_hand=False):
     """Corners, cuts and crosswalks of the junctions among `roads` [(fid, spec, pts (k, 3), lon)].
     has_walk(spec) -> bool; walk_w: sidewalk width. Returns
         corners: [dict(arc (n, 3) curb points, inward (n, 2) unit vectors toward the sidewalk,
@@ -307,7 +307,8 @@ def find(roads, has_walk, walk_w, parking_m=0.0, has_parking=lambda spec: False,
     corners): pave_radius returns, no crosswalks or stop lines, and every corner also has road_sides ((fid, side),
     (fid, side)): the two road edges it joins (side +1 left / -1 right of the geometry), and edge_cuts: their cuts.
     pavement_bounds: (x0, y0, x1, y1) for pavement callers: the junctions provably outside it are skipped (every road
-    still groups and tests the others)."""
+    still groups and tests the others). left_hand: traffic drives on the left, so the stop lines go across the other
+    half of each approach (the half whose traffic comes in)."""
     nodes = {}
     for ri, (fid, spec, pts, lon) in enumerate(roads):
         for vi, p in enumerate(pts):
@@ -584,12 +585,15 @@ def find(roads, has_walk, walk_w, parking_m=0.0, has_parking=lambda spec: False,
                     continue                    # one crosswalk where two would touch
                 crosswalks.append({"a": np.r_[a, z], "b": np.r_[b, z], "w": CROSSWALK["w"]})
                 # the stop line: across the half of the road whose traffic comes into the junction
-                # (right-hand traffic heading along -u drives on u's left), 1 m before the crosswalk
+                # (right-hand traffic heading along -u drives on u's left; left-hand traffic on u's right: in Britain,
+                # Japan or India the line lay across the lane leaving the junction, Basildon 2026-11-01), 1 m before
+                # the crosswalk
                 ts = t + CROSSWALK["w"] / 2 + STOP_GAP + STOP_LINE["w"] / 2
                 if _branch_len(roads[ri][2], vi, si) > ts + 2.0:
                     cs = Pi + ui * ts
                     zs = _z_along(roads[ri][2], vi, si, ts)
-                    stops.append({"a": np.r_[cs + nl * 0.2, zs], "b": np.r_[cs + nl * (dw - 0.3), zs], "w": STOP_LINE["w"]})
+                    ns = -nl if left_hand else nl
+                    stops.append({"a": np.r_[cs + ns * 0.2, zs], "b": np.r_[cs + ns * (dw - 0.3), zs], "w": STOP_LINE["w"]})
                 t0, t1 = t - CROSSWALK["w"] / 2, t + CROSSWALK["w"] / 2
                 for key, side in (((i, "L"), li), ((i, "R"), -li)):
                     tt, corner, (how, s0, tref), bulb = side_t[key]

@@ -551,6 +551,29 @@ class BuildTileTest(unittest.TestCase):
             back = (M == 0) & (n[:, 2] > 0.5) & (n[:, 2] < 0.95) & ((n[:, :2] @ out[1]) > 0.3)
             self.assertTrue(back.any(), "a sloped back face")
 
+    def test_stop_lines_lie_across_the_incoming_half_on_either_side_of_the_road(self):
+        """The stop line crosses the half whose traffic comes into the junction: the right-hand half of the approach in
+        right-hand traffic, the left-hand half in left-hand traffic (Britain, Japan, India...: it lay across the lane
+        leaving the junction, Basildon 2026-11-01)."""
+        import junctions
+        X = np.array((120.0, 120.0))
+        arms = [[tuple(X), (300, 120)], [tuple(X), (120, 300)], [tuple(X), (-60, 120)], [tuple(X), (120, -60)]]
+        for left_hand in (False, True):
+            with self.subTest(left_hand=left_hand):
+                walks = []
+                chunks = roads.build_tile(FRAME, 0, 0, [features(arms, ["residential"] * 4)], flat,
+                                          lambda la, lo: np.ones(np.shape(la), bool), walks=walks, left_hand=left_hand)
+                stops = [c for c in chunks if c["m"] == junctions.STOP_LINE["m"] and c["w"] == junctions.STOP_LINE["w"]]
+                self.assertEqual(len(stops), 4, "a stop line on each approach")
+                for c in stops:
+                    mid = (np.array(c["n"][0][:2]) + np.array(c["n"][-1][:2])) / 2
+                    away = mid - X
+                    u = np.array((1.0, 0.0)) * np.sign(away[0]) if abs(away[0]) > abs(away[1]) \
+                        else np.array((0.0, 1.0)) * np.sign(away[1])        # the arm, away from the junction
+                    d = -u                                                  # the incoming traffic's direction
+                    left_of_d = d[0] * away[1] - d[1] * away[0] > 0
+                    self.assertEqual(left_of_d, left_hand, (left_hand, mid.round(2).tolist()))
+
     def test_junction_corners_crosswalks_ramps(self):
         import tempfile
         import junctions
