@@ -49,14 +49,16 @@ def style(country, us):
     return STYLE_VIENNA
 
 
-def _limits(feats, i, spec, mph, country=None):
+def _limits(feats, i, spec, mph, country=None, urban=None):
     """[(fraction, posted value)] of feature i from 0 on: road_mph (the AI's) on each piece of its speed rules. In a
     country with national limits (navgraph.NATIONAL_MPH: Great Britain) only a mapped limit other than the national
     one for the road is posted (0: no sign): the national limits are not signed there (a street with no sign is 30 mph
     in town, 60 on a single and 70 on a dual carriageway), the signs stand where the limit is not the standard one
     (the user, Basildon 2026-11-02: "solo hay senales de limite de velocidad donde no son estandar"). Unmapped
-    pieces, where the AI drives the national limit, get none: nothing is guessed onto a sign."""
+    pieces, where the AI drives the national limit, get none: nothing is guessed onto a sign. urban: the land-cover
+    test of navgraph.restricted_road (a 30 mph street lit or in town is the national limit)."""
     national = str(country or "").upper() in navgraph.NATIONAL_MPH
+    restricted = navgraph.restricted_road(feats, i, spec, urban) if national and spec is not None else None
     cuts = {0.0}
     table = feats.rules.get("max_speed_kmh")
     if table is not None:
@@ -71,7 +73,7 @@ def _limits(feats, i, spec, mph, country=None):
             got = navgraph.mapped_mph(feats, i, at=(a + b) / 2) if spec is not None and spec.cls in navgraph.DRIVE \
                 else None
             v = posted(got, mph) if got is not None else 0.0
-            if v and v == posted(navgraph.default_mph(spec, mph, country), mph):
+            if v and v == posted(navgraph.default_mph(spec, mph, country, restricted), mph):
                 v = 0.0                 # the national limit: not signed
         else:
             v = posted(navgraph.road_mph(feats, i, spec, mph, at=(a + b) / 2, country=country), mph)
@@ -116,7 +118,7 @@ def _cell_rows(feats, frame, urban, widths, left_hand, mph, country=None):
             skips = [(0.0, 1.0)] if bridge else [(a, b) for a, b, _ in roads.level_ranges(feats, i)]
             meta = (sp.width / 2, (int(sp.dir) or 1) if sp.oneway else 0, RANK.get(sp.cls, 0),
                     1.0 if sp.urban else 0.0, 1.0 if getattr(sp, "link", False) else 0.0)
-            got[str(feats.ids[i])] = (line, pts, meta, cons, _limits(feats, i, sp, mph, country), skips)
+            got[str(feats.ids[i])] = (line, pts, meta, cons, _limits(feats, i, sp, mph, country, urban), skips)
     with _lock:
         if len(memo) >= CELL_FRAMES:
             memo.pop(next(iter(memo)))

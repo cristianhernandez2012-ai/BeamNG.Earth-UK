@@ -223,6 +223,45 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(navgraph.road_mph(F, 0, S("residential", True)), 25.0, "elsewhere: unchanged")
         self.assertEqual(navgraph.road_mph(F, 0, S("tertiary", True), country="US"), 30.0)
 
+    def test_restricted_roads_by_street_lighting_or_the_town_round_them(self):
+        """GB's 30 mph default is for restricted roads (street lighting): OSM's lit tag where mapped, else built-up land
+        round the road, not only at its middle (Basildon's streets between parks: 60 mph, 2026-11-02)."""
+        f = features([[(0, 0), (100, 0)], [(0, 50), (100, 50)], [(0, 90), (100, 90)]], ["unclassified"] * 3)
+        rural = roads.Spec(7.0, "paved", False, "unclassified", False)
+        self.assertFalse(navgraph.restricted_road(f, 0, rural), "no lit tag, no land cover: as before")
+        self.assertTrue(navgraph.restricted_road(f, 0, roads.Spec(7.0, "paved", False, "residential", False)),
+                        "a street of houses: lit")
+        f.attrs["osm_lit"] = np.array(["yes", "no", ""])
+        self.assertTrue(navgraph.restricted_road(f, 0, rural))
+        self.assertFalse(navgraph.restricted_road(f, 1, roads.Spec(7.0, "paved", True, "residential", False)),
+                         "lit=no: not restricted even in town, even a street of houses")
+        self.assertEqual(navgraph.road_mph(F := type("F", (), {"rules": {}}), 0, rural, country="GB",
+                                           restricted=True), 30.0)
+        self.assertEqual(navgraph.road_mph(F, 0, rural, country="GB", restricted=False), 60.0)
+
+        def town_to_the_north(lat, lon):            # built up north of the roads (a park where they run)
+            from test_roads import LAT
+            return np.asarray(lat) > LAT + 0.0001
+        self.assertTrue(navgraph.restricted_road(f, 2, rural, town_to_the_north), "town round it: restricted")
+        self.assertFalse(navgraph.restricted_road(f, 2, rural, lambda la, lo: np.zeros(np.shape(la), bool)))
+
+    def test_land_cover_not_cached_yet_counts_as_restricted_and_is_not_kept(self):
+        f = features([[(0, 0), (100, 0)]], ["unclassified"])
+        rural = roads.Spec(7.0, "paved", False, "unclassified", False)
+
+        class Surface:
+            done = False
+
+            def classes(self, lat, lon):
+                return np.zeros(np.shape(lat), np.uint8), self.done
+
+            def urban(self, lat, lon):
+                return np.zeros(np.shape(lat), bool)
+        sf = Surface()
+        self.assertTrue(navgraph.restricted_road(f, 0, rural, sf.urban))
+        sf.done = True
+        self.assertFalse(navgraph.restricted_road(f, 0, rural, sf.urban), "asked again once the land cover is in")
+
     def test_an_unmapped_piece_takes_the_limit_of_the_street_it_joins(self):
         """OpenStreetMap maps a street's limit on all but a piece (Southernhay, Basildon): the piece takes the value
         of the same-named pieces it joins when they agree; otherwise the default stands."""

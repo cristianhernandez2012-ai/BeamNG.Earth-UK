@@ -35,6 +35,18 @@ KMH_DEFAULT = {"motorway": 120, "trunk": 100, "primary": 80, "secondary": 70}
 # keep the AI's slow class speeds (no national limit of their own).
 NATIONAL_MPH = {"GB": {"restricted": 30, "single": 60, "dual": 70}}
 NATIONAL_SLOW = {"living_street", "service", "unknown"}
+# A restricted road is one with street lighting (RTRA 1984 s.82). OpenStreetMap's lit tag says so where it is mapped;
+# elsewhere the built-up land cover around the road stands in: at its middle (spec.urban) or at RESTRICTED_MIN of the
+# RESTRICTED_N points RESTRICTED_REACH_M round it (Basildon's new-town streets run between parks WorldCover reads as
+# not built-up: the point test took them for country roads, 60 mph, 2026-11-02).
+RESTRICTED_REACH_M = 250.0
+RESTRICTED_N = 8
+RESTRICTED_MIN = 3
+LIT_NO = {"no", "disused", "off"}
+# streets serving houses (OpenStreetMap highway=residential / living_street) are lit (restricted) unless mapped
+# lit=no: WorldCover's 10 m land cover reads a street of houses and gardens under trees as not built-up (Hornbeam Way,
+# Collingwood Road, Kingswood Road in Basildon: 60 mph, 2026-11-02)
+RESTRICTED_CLASSES = {"residential", "living_street"}
 MPH = 0.44704
 LANE_W_M = 3.3
 SIMPLIFY_M = 0.6            # a shape point is kept where the chord would be off by more than this
@@ -49,7 +61,7 @@ RING_MS = 30.0 / 3.6
 ENTRY_DRIVABILITY = 0.9     # stock AI yields to the ring's 1.0, even on a tangential entry
 
 
-def road_mph(feats, i, spec, mph=True, at=0.5, country=None):
+def road_mph(feats, i, spec, mph=True, at=0.5, country=None, restricted=None):
     """The speed limit (mph) of road feature i at fraction at (default: its middle); unmapped, the limit mapped on the
     pieces of the same street it joins (inherited_kmh), else the country's default (default_mph), or None for a class
     the AI does not drive. Shared by the graph and the speed-limit signs (speedsigns.py), so a sign shows what the
@@ -57,7 +69,7 @@ def road_mph(feats, i, spec, mph=True, at=0.5, country=None):
     if spec is None or spec.cls not in DRIVE:
         return None
     got = mapped_mph(feats, i, at)
-    return got if got is not None else default_mph(spec, mph, country)
+    return got if got is not None else default_mph(spec, mph, country, restricted)
 
 
 def mapped_mph(feats, i, at=0.5):
@@ -79,13 +91,14 @@ def mapped_mph(feats, i, at=0.5):
     return None
 
 
-def default_mph(spec, mph=True, country=None):
-    """The limit (mph) of a road whose own is not mapped: the country's national limits (NATIONAL_MPH), else the class
-    default the traffic drives (DRIVE: the US's; KMH_DEFAULT for the fast classes where km/h are posted), capped in
-    town for arterials."""
+def default_mph(spec, mph=True, country=None, restricted=None):
+    """The limit (mph) of a road whose own is not mapped: the country's national limits (NATIONAL_MPH; restricted: a
+    restricted road, restricted_road's, None: spec.urban), else the class default the traffic drives (DRIVE: the US's;
+    KMH_DEFAULT for the fast classes where km/h are posted), capped in town for arterials."""
     nat = NATIONAL_MPH.get(str(country or "").upper())
     if nat is not None and spec.cls not in NATIONAL_SLOW:
-        if spec.urban and spec.cls not in ("motorway", "trunk"):
+        town = spec.urban if restricted is None else restricted
+        if town and spec.cls not in ("motorway", "trunk"):
             return float(nat["restricted"])
         dual = spec.cls == "motorway" or (spec.oneway and getattr(spec, "median", None) is not None)
         return float(nat["dual" if dual else "single"])
@@ -95,6 +108,57 @@ def default_mph(spec, mph=True, country=None):
     if spec.urban and spec.cls in URBAN_MPH_CAP:
         v = min(v, URBAN_MPH_CAP[spec.cls])
     return float(v)
+
+
+def restricted_road(feats, i, spec, urban_fn=None):
+    """Whether road feature i is a restricted road (street lighting: the national limit 30 mph in Great Britain):
+    OpenStreetMap's lit tag where mapped (no / disused / off: not; any other value: lit), else a street serving houses
+    (RESTRICTED_CLASSES), else built-up land cover at its middle (spec.urban) or round it (RESTRICTED_MIN of RESTRICTED_N points RESTRICTED_REACH_M from its middle; one
+    land-cover call per decoded cell, kept on it). While the land cover is not cached (urban_fn's Surface reports it
+    incomplete) a road counts as restricted and nothing is kept: the lower limit, and no national-limit guess."""
+    for col in ("osm_lit", "lit"):
+        vals = feats.attrs.get(col)
+        if vals is not None:
+            v = str(vals[i] if vals[i] is not None else "").strip().lower()
+            if v and v not in ("none", "nan"):
+                return v not in LIT_NO
+            break
+    if spec is not None and (spec.urban or spec.cls in RESTRICTED_CLASSES):
+        return True
+    if urban_fn is None:
+        return False
+    memo = feats.__dict__.setdefault("_restricted", {})
+    got = memo.get(urban_fn)
+    if got is None:
+        n = len(feats)
+        mids = np.full((n, 2), np.nan)
+        for j in range(n):
+            parts = feats.parts(j)
+            if parts and len(parts[0]) and len(parts[0][0]):
+                ln = np.asarray(parts[0][0], np.float64)
+                mids[j] = ln[len(ln) // 2, :2]
+        ang = np.arange(RESTRICTED_N) * (2 * math.pi / RESTRICTED_N)
+        dlat = RESTRICTED_REACH_M / 111320.0 * np.sin(ang)
+        coslat = np.cos(np.radians(np.nan_to_num(mids[:, 1])))[:, None]
+        dlon = RESTRICTED_REACH_M / (111320.0 * np.maximum(coslat, 0.05)) * np.cos(ang)[None, :]
+        lat = (mids[:, 1][:, None] + dlat[None, :]).ravel()
+        lon = (mids[:, 0][:, None] + dlon).ravel()
+        ok = np.isfinite(lat) & np.isfinite(lon)
+        built = np.zeros(lat.shape, bool)
+        surf = getattr(urban_fn, "__self__", None)
+        complete = True
+        if ok.any():
+            if surf is not None and hasattr(surf, "classes"):
+                cls, complete = surf.classes(lat[ok], lon[ok])
+                import roads as roadsmod
+                built[ok] = np.asarray(cls) == roadsmod.URBAN_CLASS
+            else:
+                built[ok] = np.asarray(urban_fn(lat[ok], lon[ok]), bool)
+        got = built.reshape(n, RESTRICTED_N).sum(axis=1) >= RESTRICTED_MIN
+        if not complete:
+            return True                 # (the land cover still coming: not kept)
+        memo[urban_fn] = got
+    return bool(got[i])
 
 
 def _end_keys(feats, j):
@@ -380,6 +444,8 @@ def build(frame, feats_list, elev, centre, urban_fn=None, window=WINDOW_M, decks
                     continue
                 incoming = direction == 0 or (direction > 0) == (end == -1)   # unless one-way out of it
                 approaches[(names[j], fid, end)] = (names[nb], incoming)
+            restricted = restricted_road(feats, i, spec, urban_fn) \
+                if str(country or "").upper() in NATIONAL_MPH else None
             for j in range(len(names) - 1):
                 a, b = names[j], names[j + 1]
                 if a == b:
@@ -399,7 +465,8 @@ def build(frame, feats_list, elev, centre, urban_fn=None, window=WINDOW_M, decks
                         pending[nm] = (float(q[0]), float(q[1]))
                         node_fid[nm] = fid
                         pending_by[nm] = (-w, fid)
-                legal = road_mph(feats, i, spec, mph, at=(full[j] + full[j + 1]) / (2 * L), country=country) * MPH
+                legal = road_mph(feats, i, spec, mph, at=(full[j] + full[j + 1]) / (2 * L), country=country,
+                                 restricted=restricted) * MPH
                 target = min(legal, float(profile[j]), float(profile[j + 1]))
                 edges.append([a, b, 1 if direction else 0, lo, li, round(target, 2), driv, round(w / 2, 2)])
                 edge_fids.append(fid)

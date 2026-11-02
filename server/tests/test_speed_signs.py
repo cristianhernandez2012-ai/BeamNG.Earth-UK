@@ -190,7 +190,7 @@ class GlueTest(unittest.TestCase):
         mph = 1.609344
         f.rules["max_speed_kmh"] = rules([(0, 30 * mph, 0, 0.5), (0, 40 * mph, 0.5, 1), (1, 20 * mph, 0, 1)], "float")
         town = roads.Spec(7.0, "paved", True, "residential", False)
-        country = roads.Spec(7.0, "paved", False, "residential", False)
+        country = roads.Spec(7.0, "paved", False, "unclassified", False)     # (a residential street is lit)
         self.assertEqual(speedsigns._limits(f, 0, town, True, "GB"), [(0.0, 0.0), (0.5, 40.0)],
                          "30 in town: the national limit, not signed; 40: signed")
         self.assertEqual(speedsigns._limits(f, 1, town, True, "GB"), [(0.0, 20.0)])
