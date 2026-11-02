@@ -738,3 +738,36 @@ class CoarseEaseTest(unittest.TestCase):
     def test_equal_ranks_meet_halfway(self):
         main, side = self.run_ease(100.0, 104.0, 7.0, rank_side=7)
         self.assertLess(float(np.median(side) - np.median(main)), 2.5)
+
+
+class DipChainsTest(unittest.TestCase):
+    """An underpass dip stays on the road under the bridge, its straight continuation, the same street and an
+    interchange's links; a road it merges into or joins at an angle keeps its height (Basildon's Southernhay, dragged
+    1-4.5 m under its ground by the side roads under the railway, 2026-11-02)."""
+
+    def test_a_merge_or_a_side_road_keeps_its_height(self):
+        under = np.array([[0.0, -50.0], [0.0, 0.0]])          # the road under the bridge, north to the node
+        main_w = np.array([[-80.0, 5.0], [0.0, 0.0]])          # the main road through the node (west piece) ...
+        main_e = np.array([[0.0, 0.0], [80.0, -5.0]])          # ... and its east piece
+        lines = [under, main_w, main_e]
+        names = [("Clay Hill Road", False), ("Southernhay", False), ("Southernhay", False)]
+        self.assertEqual(grading.dip_chains(lines, {0: [30.0]}, names=names), {0})
+
+    def test_straight_on_the_same_street_and_links_carry_it(self):
+        a = np.array([[0.0, -50.0], [0.0, 0.0]])
+        b = np.array([[0.0, 0.0], [2.0, 60.0]])                # straight on, another name
+        side = np.array([[0.0, 0.0], [70.0, 10.0]])            # at an angle
+        lines = [a, b, side]
+        self.assertEqual(grading.dip_chains(lines, {0: [30.0]}, names=[("A", False), ("B", False), ("C", False)]),
+                         {0, 1})
+        self.assertEqual(grading.dip_chains(lines, {0: [30.0]}, names=[("A", False), ("B", False), ("A", False)]),
+                         {0, 1, 2}, "the same street bending at the junction")
+        self.assertEqual(grading.dip_chains(lines, {0: [30.0]}, names=[("A", False), ("B", False), ("", True)]),
+                         {0, 1, 2}, "an interchange's link")
+
+    def test_detach_from_moves_only_the_kept_roads_ends(self):
+        a = np.array([[0.0, -50.0], [0.0, 0.0]])
+        b = np.array([[0.0, 0.0], [80.0, 0.0]])
+        out = grading.detach_from([a, b], {0})
+        self.assertIs(out[0], a)
+        self.assertAlmostEqual(float(out[1][0][0]), grading.UNDER_DETACH_M)

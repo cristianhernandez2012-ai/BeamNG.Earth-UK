@@ -211,6 +211,13 @@ UNDER_JOINT_FLAT_M = 12.0   # at a junction, every road takes the deepest dip wi
 UNDER_JOINT_FADE_M = 20.0   # ... blended back to its own over this
 # m around a cell's plans whose roads and spans its dips are solved on: the farthest a dip or a loose end reaches
 # (underpass_offsets: flat + the longest ramp, a junction's share) and a span's length; every cell sees the same
+# A dip stays on the roads that cross under the bridge and their straight continuations (CHAIN_TURN_DEG at a shared
+# end): the kernel spreads it along every joined road for hundreds of metres, and a road the dipped one only meets at
+# a junction was lowered too. Basildon's side roads under the c2c railway (lidar terrain: the embankment in the ground,
+# their dip under it right) took Southernhay, the dual carriageway they join 15-30 m away, 1-4.5 m under its flat
+# ground for 550 m, each carriageway by another depth (the user's PC, 2026-11-02: "la calzada se sube"). The others
+# keep their ground; snap_junctions then sets a dipped road's end on the road it joins.
+UNDER_SPREAD_ON = os.environ.get("BNE_UNDER_SPREAD", "chain") != "all"
 UNDER_NEAR_M = 4 * VERTEX_STEP  # m past a cell's box its plans' dips are made (to their pieces' cut ends there)
 UNDER_REACH_M = UNDER_FLAT_M + UNDER_MAX_DROP_M * math.pi / UNDER_GRADE + 2 * UNDER_JOINT_FLAT_M \
     + UNDER_JOINT_FADE_M + 10.0
@@ -1361,7 +1368,7 @@ class _Planner:
         cla, clo = np.asarray(cla, f64), np.asarray(clo, f64)
         keys = sorted(set(mapcells.cells_for_bbox(float(cla.min()), float(clo.min()), float(cla.max()),
                                                   float(clo.max()))) | {key}, key=str)
-        bridges, ground = [], {}
+        bridges, ground, gname = [], {}, {}
         for k in keys:
             c = self._cell_enu(k)
             for line, cls in zip(c["bridges"], c.get("bridge_cls", [None] * len(c["bridges"]))):
@@ -1373,7 +1380,8 @@ class _Planner:
             # (a line's deck: never raised; straight between its ends whatever its length or what it joins, as
             # railways.deck_heights lays it: no single-span test)
             bridges += [(line, True, True) for line in c.get("rail_bridges", ())]
-            for (line, _h, cls), (fid, j, sg, med) in zip(c["ground"], c["ground_ids"]):
+            for (line, _h, cls), (fid, j, sg, med), nml in zip(c["ground"], c["ground_ids"],
+                                                              c.get("ground_name") or [("", False)] * len(c["ground"])):
                 if cls in UNGRADED or len(line) < 2:
                     continue
                 if (line.max(0) < lo).any() or (line.min(0) > hi).any():
@@ -1381,6 +1389,7 @@ class _Planner:
                 got = ground.get((fid, j))      # (the longest copy of a part, as each cell has it)
                 if got is None or len(line) > len(got[0]):
                     ground[(fid, j)] = (line, sg, med)
+                    gname[(fid, j)] = nml
         if not bridges or not ground:
             return
         # (single spans: neither end continues into another bridge part; deduplicated across cells)
@@ -1473,9 +1482,18 @@ class _Planner:
             inside.append(near)
         if not queries:
             return
-        for n, near, got in zip(which, inside, underpass_offsets(lines, requirements, queries)):
+        seeds = {}
+        for i, sc, _d in requirements:
+            seeds.setdefault(i, []).append(sc)
+        dipped = dip_chains(lines, seeds, names=[gname.get(g, ("", False)) for g in gids]) if UNDER_SPREAD_ON else None
+        # (the kernel sees the dipped roads joined among themselves only: the others' ends moved off theirs, so a
+        # dipped road's end at a road that keeps its height is a loose end, pinned, its ramp inside it; no step)
+        joined = lines if dipped is None else detach_from(lines, dipped)
+        for n, near, got, (best, _q) in zip(which, inside, underpass_offsets(joined, requirements, queries), queries):
             if not np.any(got < -1e-8):
                 continue
+            if dipped is not None and best not in dipped:
+                continue                        # (a road the dipped one only meets: its own ground)
             fid, p = plans[n]
             offset = np.zeros(len(near))        # (past the box: the plan's piece there is another cell's)
             offset[near] = got
@@ -1642,7 +1660,9 @@ class _Planner:
                         # (and the tracks on the ground: a road bridge's approaches rise over them as over a road,
                         # GitHub #324)
                         rail_g += [np.asarray(r, np.float64) for r in rings if len(r) >= 2]
-        bridges, ground_l, ends, end_of, bcls, ground_ids = [], [], [], [], [], []
+        bridges, ground_l, ends, end_of, bcls, ground_ids, ground_name = [], [], [], [], [], [], []
+        names_f = f.attrs.get("name") if f is not None and len(f) else None
+        name_of = {} if names_f is None else {str(f.ids[i]): str(names_f[i] or "").strip() for i in range(len(f))}
         items = sorted(parts.items())
         if items:               # (the frame's conversion once for every part: it is per call)
             allr = np.concatenate([ring for _k, (ring, _sp) in items])
@@ -1661,6 +1681,8 @@ class _Planner:
             else:
                 ground_l.append((line, sp.width / 2 + shoulder(sp), sp.cls))
                 ground_ids.append((fid, j, profile_sigma(sp), MEDIAN_M if sp.kind in roadsmod.BUILT else DIRT_MEDIAN_M))
+                nm = name_of.get(fid, "")
+                ground_name.append(("", True) if _is_link(sp) else ("" if nm in ("None", "nan") else nm, False))
         rail_xy, rail_gxy = [], []
         if rail or rail_g:
             allr = np.concatenate(rail + rail_g)
@@ -1671,6 +1693,7 @@ class _Planner:
                 out_.append(rxy[k0:k0 + len(ring)])
                 k0 += len(ring)
         return {"bridges": bridges, "bridge_cls": bcls, "ground": ground_l, "ground_ids": ground_ids, "end_of": end_of,
+                "ground_name": ground_name,
                 "ends": np.asarray(ends, np.float64).reshape(-1, 2), "rail_bridges": rail_xy, "rail_ground": rail_gxy}
 
     def _ground_table(self, keys, cs):
@@ -2604,6 +2627,137 @@ def fill_abutment(z, at_end, step=PROFILE_STEP):
     q = p.copy()
     q[:n] = np.minimum(np.maximum(p[:n], e), p[:n] + ABUT_MAX_M)
     return q[::-1] if at_end else q
+
+
+UNDER_CHAIN_M = UNDER_REACH_M      # m of straight continuation a dip may reach (the kernel's own reach)
+UNDER_DETACH_M = 1.0                # m a kept road's end is moved back along it, past the kernel's 0.5 m join
+
+
+def detach_from(lines, group, tol=0.5, back=UNDER_DETACH_M):
+    """lines with the ends of the lines not in group that lie within tol of an end of a line in group moved back
+    along their own line by back m (at most a third of it): underpass_offsets then joins the group's lines among
+    themselves only. The others as they are (the same arrays). Pure."""
+    pts = [np.asarray(ln, np.float64)[:, :2] for ln in lines]
+    grid = {}
+    for i in group:
+        p = pts[i]
+        if len(p) >= 2:
+            for e in (0, -1):
+                grid.setdefault((math.floor(p[e, 0] / tol), math.floor(p[e, 1] / tol)), []).append(p[e])
+    out = list(lines)
+    for i, p in enumerate(pts):
+        if i in group or len(p) < 2:
+            continue
+        moved = None
+        for e in (0, -1):
+            gx, gy = math.floor(p[e, 0] / tol), math.floor(p[e, 1] / tol)
+            if not any(float(np.hypot(*(q - p[e]))) <= tol for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                       for q in grid.get((gx + dx, gy + dy), ())):
+                continue
+            if moved is None:
+                moved = p.copy()
+            s = np.r_[0.0, np.cumsum(np.hypot(*np.diff(p, axis=0).T))]
+            d = min(back, s[-1] / 3.0)
+            t = d if e == 0 else s[-1] - d
+            moved[e] = [np.interp(t, s, p[:, 0]), np.interp(t, s, p[:, 1])]
+        if moved is not None:
+            out[i] = moved
+    return out
+
+
+def dip_chains(lines, seeds, tol=0.5, turn_deg=None, look=None, reach=None, names=None):
+    """{line indices}: seeds (the roads that cross under a bridge: {line: [arc m of each crossing]}, or a set) and the
+    lines continuing them straight on, end to end (ends within tol, turning at most turn_deg there over look m:
+    CHAIN_TURN_DEG / CHAIN_LOOK_M), each the other's straightest at the node (the road through a junction; a road
+    merging into another or joining it at an angle ends the dip, the road joined keeps its height), while they start within reach m (UNDER_CHAIN_M: a dip's flat and ramp) of a crossing along the
+    chain. Also into any line of the same street at a node (names: [(name, is a link)] per line; a road bending at a
+    junction) and between a road and a link (an interchange's ramps dip with the road under the bridge: the I-80
+    junctions at Otto Road). Pure."""
+    if not isinstance(seeds, dict):
+        seeds = {i: None for i in seeds}
+    reach = UNDER_CHAIN_M if reach is None else reach
+    turn_deg = CHAIN_TURN_DEG if turn_deg is None else turn_deg
+    look = CHAIN_LOOK_M if look is None else look
+    pts = [np.asarray(ln, np.float64)[:, :2] for ln in lines]
+
+    def end_dir(p, e):      # unit vector leaving the end e (0 / -1) into the line
+        q = p if e == 0 else p[::-1]
+        s = np.r_[0.0, np.cumsum(np.hypot(*np.diff(q, axis=0).T))]
+        t = min(look, s[-1])
+        far = np.array([np.interp(t, s, q[:, 0]), np.interp(t, s, q[:, 1])])
+        d = far - q[0]
+        n = float(np.hypot(*d))
+        return d / n if n > 1e-9 else None
+    grid = {}
+    for i, p in enumerate(pts):
+        if len(p) < 2:
+            continue
+        for e in (0, -1):
+            grid.setdefault((math.floor(p[e, 0] / tol), math.floor(p[e, 1] / tol)), []).append((i, e))
+    # (at a node a dip passes only between two lines that are each other's straightest continuation: the road through
+    # a junction, not a road merging into it or joining it at an angle, whose own straight partner is the road's
+    # other piece; copies of one line from neighbouring cells count once)
+    sig = [None if len(p) < 2 else (round(float(p[0, 0]), 1), round(float(p[0, 1]), 1), round(float(p[-1, 0]), 1),
+                                   round(float(p[-1, 1]), 1)) for p in pts]
+
+    def at_node(p, e):          # [(sig, unit direction leaving the node)] of the distinct lines ending there
+        gx, gy = math.floor(p[e, 0] / tol), math.floor(p[e, 1] / tol)
+        got = {}
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for j, f in grid.get((gx + dx, gy + dy), ()):
+                    if sig[j] not in got and float(np.hypot(*(pts[j][f] - p[e]))) <= tol:
+                        d = end_dir(pts[j], f)
+                        if d is not None:
+                            got[sig[j]] = (j, f, d)
+        return got
+
+    def partner(node, me):      # the sig of the straightest other line at the node
+        d0 = node[me][2]
+        others = [(float(d0 @ v[2]), s_) for s_, v in node.items() if s_ != me]
+        return min(others)[1] if others else None
+    cos_max = math.cos(math.radians(180.0 - turn_deg))      # leaving directions nearly opposite: straight on
+    # (the name rule follows the street under the bridge: a chain that runs straight on into a road of another name
+    # keeps its seed's name, so it does not spread along all of that road)
+    out, todo = set(), [(i, None, 0.0, names[i][0] if names is not None else "") for i in seeds if 0 <= i < len(pts)]
+    while todo:
+        i, came, dist, street = todo.pop()
+        if i in out:
+            continue
+        out.add(i)
+        p = pts[i]
+        if len(p) < 2:
+            continue
+        L = float(np.hypot(*np.diff(p, axis=0).T).sum())
+        for e in (0, -1):
+            if came == e:
+                continue
+            if i in seeds:          # (from its nearest crossing to this end)
+                arcs = seeds[i]
+                grow = 0.0 if not arcs else min((a if e == 0 else L - a) for a in arcs)
+            else:                   # (in at the other end: its whole length)
+                grow = dist + L
+            if grow > reach:
+                continue
+            node = at_node(p, e)
+            if sig[i] not in node:
+                continue
+            go = set()
+            best = partner(node, sig[i])
+            if best is not None and partner(node, best) == sig[i] \
+                    and float(node[sig[i]][2] @ node[best][2]) <= cos_max:
+                go.add(best)            # (the road straight on through the node)
+            if names is not None:
+                link_i = names[i][1]
+                for s_, (j, _f, _d) in node.items():
+                    nm_j, link_j = names[j]
+                    if s_ != sig[i] and (link_i or link_j or (street and street == nm_j)):
+                        go.add(s_)      # (the same street bending at the junction; an interchange's ramp)
+            for jj, ff in [(k_, f_) for k_, s_ in enumerate(sig) if s_ in go for f_ in (0, -1)
+                           if float(np.hypot(*(pts[k_][f_] - p[e]))) <= tol]:
+                if jj not in out and jj != i:
+                    todo.append((jj, ff, grow, street))
+    return out
 
 
 def underpass_offsets(lines, requirements, queries=None):
