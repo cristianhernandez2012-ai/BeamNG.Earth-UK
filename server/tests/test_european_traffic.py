@@ -156,6 +156,7 @@ class PrioritySignByCountry(unittest.TestCase):
                                           country="GB")[0] for lh in (False, True)]
         self.assertEqual([r[0] for r in sides], [furniture.G_YIELD] * 2)
         self.assertNotEqual(sides[0][2], sides[1][2], "a give-way sign still swaps to the near kerb")
+        self.assertEqual(sides[0][4], sides[1][4], "... turned as on the right-hand kerb: its face to the drivers")
 
     def test_give_way_junctions_install_no_stop_controller_for_the_ai(self):
         """navgraph drops G_YIELD, so UK traffic yields on edge priority instead of halting at every side road."""

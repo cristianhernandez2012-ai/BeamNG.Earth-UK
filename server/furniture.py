@@ -398,8 +398,8 @@ def signal_spot(c, u, right, wide, half, lines):
 
 
 def prop_side(u, what, left_hand=False):
-    """The unit vector from an approach's centre line to the kerb its junction prop stands on (and the yaw it turns to:
-    _yaw of it). u: the arm's unit vector away from the junction (traffic comes in along -u). Signs stand on the near
+    """The unit vector from an approach's centre line to the kerb its junction prop stands on (junction_spot turns it
+    as on the right-hand kerb). u: the arm's unit vector away from the junction (traffic comes in along -u). Signs stand on the near
     kerb: the approach's right, its left where traffic drives on the left. A signal (G_SIGNAL) stands on the right
     either way: the stock boom (trees.lua SIGNAL_STOCK, navgraph.lua SIGNAL_SHAPE) is modelled for right-hand
     traffic, the mast on the approach's right and the arm reaching left over the carriageway, the head facing the
@@ -417,16 +417,20 @@ def prop_side(u, what, left_hand=False):
 
 def junction_spot(c, u, what, wide, half, lines, left_hand=False):
     """(point, yaw) of an approach's junction prop (signal_spot's arguments; what: G_SIGNAL, G_STOP or G_YIELD), or
-    None when nowhere is clear: on prop_side's kerb, turned to it. A signal in left-hand traffic whose offside kerb is
-    not clear (a dual carriageway's central reservation, the opposite carriageway beside it: 5 of 13 heads of a
-    Basildon junction were dropped, 2026-11-01) stands on the nearside kerb, its primary signal's (TSRGD 2016
-    Schedule 14), turned the same way, so its head still faces the drivers coming in. Shared by junction_props and
-    navgraph._signals."""
+    None when nowhere is clear: on prop_side's kerb, turned as on the right-hand kerb whichever kerb it stands on.
+    The props are one-sided (a sign's face, a boom's head) and their yaw was set from the kerb vector: on the left-hand
+    kerb it turned them 180 degrees, their backs to the drivers (the signals, Basildon 2026-11-01; the GIVE WAY and STOP
+    signs, 2026-11-02: "una triangular esta al reves"). A sign has no arm, so on the nearside kerb it keeps the
+    right-hand yaw and faces the drivers coming in. A signal in left-hand traffic whose offside kerb is not clear (a dual
+    carriageway's central reservation, the opposite carriageway beside it: 5 of 13 heads of a Basildon junction were
+    dropped, 2026-11-01) stands on the nearside kerb, its primary signal's (TSRGD 2016 Schedule 14), turned the same
+    way. Shared by junction_props and navgraph._signals."""
     side = prop_side(u, what, left_hand)
     q = signal_spot(c, u, side, wide, half, lines)
     if q is None and what == G_SIGNAL and left_hand:
         q = signal_spot(c, u, -side, wide, half, lines)
-    return None if q is None else (q, _yaw(side[0], side[1]))
+    face = prop_side(u, what, False)            # the right-hand kerb: the yaw every prop model faces its drivers from
+    return None if q is None else (q, _yaw(face[0], face[1]))
 
 
 def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=None, country=None):
