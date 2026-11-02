@@ -563,6 +563,11 @@ class BuildTileTest(unittest.TestCase):
         chunks = roads.build_tile(FRAME, 0, 0, [f], flat, lambda la, lo: np.ones(np.shape(la), bool), walks=walks,
                                   left_hand=True, country="GB", signals=np.zeros((0, 2)))
         self.assertFalse([c for c in chunks if c["m"] == junctions.CROSSWALK["m"]], "no crosswalk")
+        tri = [c for c in chunks if c["m"] == junctions.STOP_LINE["m"] and c["w"] == furniture.TRIANGLE_W]
+        self.assertEqual(len(tri), 3, "the GIVE WAY triangle's three sides (diagram 1023)")
+        tp = np.concatenate([np.array(c["n"])[:, :2] for c in tri])
+        self.assertTrue((tp[:, 0] > X[0]).all() and (tp[:, 1] < X[1]).all(), "in the incoming lane of the east arm")
+        self.assertAlmostEqual(float(tp[:, 0].max() - tp[:, 0].min()), furniture.TRIANGLE_L, delta=0.05)
         gw = [c for c in chunks if c["m"] == junctions.STOP_LINE["m"] and c["w"] == furniture.GIVEWAY_LINE_W]
         self.assertGreaterEqual(len(gw), 4, "two broken lines, several marks each")
         for c in gw:

@@ -537,6 +537,12 @@ STOP_MARK_W = 0.3
 MARK_BACK_M = 0.5
 MARK_KERB_M = 0.2           # m inside the kerb a line ends
 MARK_CENTRE_M = 0.1         # m off the centre line a half-width line starts
+# the GIVE WAY triangle on the approach (TSRGD 2016 diagram 1023): an outlined triangle in the middle of the incoming
+# lane, its base TRIANGLE_BACK_M before the give-way line and its point towards the drivers coming in
+TRIANGLE_L = 3.75
+TRIANGLE_BASE = 1.25
+TRIANGLE_W = 0.15
+TRIANGLE_BACK_M = 2.0
 
 
 def junction_markings(roads, box, left_hand=False, signals=None, country=None):
@@ -577,6 +583,15 @@ def junction_markings(roads, box, left_hand=False, signals=None, country=None):
                     m = c[:2] + u * (wide + back)
                     a, b = m + near * lo, m + near * hi
                     out.append((what, np.array([[a[0], a[1], z], [b[0], b[1], z]]), GIVEWAY_LINE_W, GIVEWAY_DASH))
+                # the triangle (diagram 1023), where the arm is long enough and the lane wide enough
+                base_t = wide + MARK_BACK_M + 2 * GIVEWAY_LINE_W + GIVEWAY_LINE_GAP + TRIANGLE_BACK_M
+                lane_mid = (lo + hi) / 2
+                if (len(arm) < 6 or arm[5] > base_t + TRIANGLE_L + 2.0) and hi - lo >= TRIANGLE_BASE + 0.4:
+                    b0 = c[:2] + u * base_t + near * (lane_mid - TRIANGLE_BASE / 2)
+                    b1 = c[:2] + u * base_t + near * (lane_mid + TRIANGLE_BASE / 2)
+                    tip = c[:2] + u * (base_t + TRIANGLE_L) + near * lane_mid
+                    for a, b in ((b0, b1), (b1, tip), (tip, b0)):
+                        out.append((what, np.array([[a[0], a[1], z], [b[0], b[1], z]]), TRIANGLE_W, None))
             else:
                 m = c[:2] + u * (wide + MARK_BACK_M + STOP_MARK_W / 2)
                 a, b = m + near * lo, m + near * hi
