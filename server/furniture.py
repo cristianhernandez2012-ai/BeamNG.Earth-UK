@@ -211,6 +211,41 @@ JUNCTION_SNAP_M = 1.0       # road ends this close are one junction
 GIVE_WAY_COUNTRIES = frozenset({"GB", "IE", "IM", "JE", "GG"})
 
 
+# Where a GIVE WAY sign stands in those countries: the Traffic Signs Manual (chapter 3, 2019, "Regulatory signs") has the
+# diagram 602 sign at a junction only where it is needed (the major road a primary route or a busy one, poor
+# visibility, a roundabout's entries); most minor junctions have the give-way road markings alone (diagram 1003 double
+# broken line, 1023 triangle). Signed: roundabout entries, a minor road joining a primary or trunk road (SIGN_MAJOR),
+# and every arm where OpenStreetMap maps a highway=give_way node (GIVEWAY_NEAR_M of the junction along it). Basildon,
+# 2026-11-02: a triangle at every residential corner, "los give way en UK solo van cuando se necesitan".
+SIGN_MAJOR = {"primary", "trunk", "motorway"}
+GIVEWAY_NEAR_M = 30.0       # m along the arm from the junction a mapped give_way node signs it
+GIVEWAY_ACROSS_M = 3.0      # m beyond the arm's half width
+
+
+def _giveway_mapped(arm, giveways):
+    """Is a mapped give_way node (giveways: (n, 2) frame xy) on this arm (fid, spec, u away, point), near the
+    junction?"""
+    if giveways is None or not len(giveways):
+        return False
+    c = np.asarray(arm[3], np.float64)[:2]
+    u = np.asarray(arm[2], np.float64)
+    v = np.asarray(giveways, np.float64) - c
+    along = v @ u
+    across = np.abs(v[:, 0] * u[1] - v[:, 1] * u[0])
+    return bool(((along >= -2.0) & (along <= GIVEWAY_NEAR_M) & (across <= arm[1].width / 2 + GIVEWAY_ACROSS_M)).any())
+
+
+def giveway_signed(arm, arms, country=None, giveways=None, on_ring=False):
+    """Does a G_YIELD arm get a GIVE WAY sign: always outside GIVE_WAY_COUNTRIES (their priority junctions were STOP
+    there) and at a roundabout's entries; in them, where the junction has a SIGN_MAJOR arm or a give_way node is
+    mapped on this arm (giveways: mapped_giveways' points; None: unknown)."""
+    if on_ring or str(country or "").upper() not in GIVE_WAY_COUNTRIES:
+        return True
+    if any(a[1].cls in SIGN_MAJOR for a in arms if a is not arm):
+        return True
+    return _giveway_mapped(arm, giveways)
+
+
 def priority_sign(country=None):
     """What the minor arm of a priority junction is signed with: G_YIELD in the give-way countries, else G_STOP."""
     return G_YIELD if str(country or "").upper() in GIVE_WAY_COUNTRIES else G_STOP
@@ -249,7 +284,24 @@ SIGNAL_NEAR_M = 25.0        # m past the junction's widest arm a mapped traffic 
                             # junction's node or at each approach's stop line)
 
 
-def mapped_signals(frame, infra_list):
+def mapped_giveways(frame, infra_list):
+    """(n, 2) frame xy of OpenStreetMap's highway=give_way nodes (Overture infrastructure transportation/give_way) in
+    infra_list, as mapped_signals; None when no layer could be read."""
+    return mapped_signals(frame, infra_list, cls="give_way")
+
+
+def giveways_for(md, frame, keys):
+    """mapped_giveways of the map cells keys, None when their infrastructure cannot be read."""
+    try:
+        return mapped_giveways(frame, [md.cell(k, layers=("infrastructure",), kind="demand").layers.get(
+            "infrastructure") for k in keys])
+    except Exception as e:      # the class rule alone rather than no road tile
+        import logging
+        logging.getLogger("earthd.furniture").debug("give-way nodes: %s: %s", type(e).__name__, e)
+        return None
+
+
+def mapped_signals(frame, infra_list, cls="traffic_signals"):
     """(n, 2) frame xy of OpenStreetMap's traffic signals (Overture infrastructure transportation/traffic_signals) in
     infra_list (infrastructure Features of map cells, duplicates taken once); None when no layer could be read (the
     junctions then fall back to _guess_signalled)."""
@@ -259,11 +311,11 @@ def mapped_signals(frame, infra_list):
     for f in infra_list:
         if f is None or len(f) == 0:
             continue
-        cls, sub = f.attrs.get("class"), f.attrs.get("subtype")
-        if cls is None:
+        cls_, sub = f.attrs.get("class"), f.attrs.get("subtype")
+        if cls_ is None:
             continue
         # (whole arrays: a city cell has thousands of infrastructure features and a road tile reads ~9 cells)
-        hit = np.asarray(cls).astype(str) == "traffic_signals"
+        hit = np.asarray(cls_).astype(str) == cls
         if sub is not None:
             hit &= np.asarray(sub).astype(str) == "transportation"
         for i in np.flatnonzero(hit):
@@ -433,13 +485,14 @@ def junction_spot(c, u, what, wide, half, lines, left_hand=False):
     return None if q is None else (q, _yaw(face[0], face[1]))
 
 
-def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=None, country=None):
+def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=None, country=None, giveways=None):
     """Signals at the junctions with a mapped traffic signal (signals: mapped_signals'; None: at urban junctions of
     two or more major roads), priority signs at urban junctions
     of minor roads (the minor arms meeting a major road; the stem of a T; half the four-way ones, hashed).
     Each on the approach's right (its left where traffic drives on the left), at the junction's edge, facing
     the drivers who come in. decks: [(centreline (k, 3), half width)] of the bridge decks near (signal_spot).
-    country (ISO 3166-1 alpha-2): STOP or GIVE WAY on those minor arms (priority_sign)."""
+    country (ISO 3166-1 alpha-2): STOP or GIVE WAY on those minor arms (priority_sign), and where a GIVE WAY sign stands
+    (giveway_signed; giveways: mapped_giveways' points near, None unknown)."""
     x0, y0, x1, y1 = box
     rows = []
     junctions = _arms(roads)
@@ -459,7 +512,10 @@ def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=N
         if not put:
             continue
         wide = max(a[1].width for a in arms) / 2
-        for (fid, spec, u, c, *_), what in put:
+        for arm, what in put:
+            fid, spec, u, c = arm[:4]
+            if what == G_YIELD and not giveway_signed(arm, arms, country, giveways, on_ring):
+                continue                # the road markings alone (TSM chapter 3: a sign only where it is needed)
             spot = junction_spot(c, u, what, wide, spec.width / 2, lines, left_hand)    # facing the incoming drivers
             if spot is None or not (x0 - 20 <= spot[0][0] < x1 + 20 and y0 - 20 <= spot[0][1] < y1 + 20):
                 continue
@@ -631,7 +687,7 @@ def under_decks(rows, decks, wires=None):
 
 
 def place(roads, walks, box, curb_h=0.15, wires=None, town=False, left_hand=False, decks=(),
-          signals=None, buried=0.0, region=None, lighting=None, country=None):
+          signals=None, buried=0.0, region=None, lighting=None, country=None, giveways=None):
     """Rows [group, x, y, z, yaw, scale, height, rank] (trees.lua's tile rows) of the lamps and poles of a
     tile box (x0, y0, x1, y1). roads: build_tile's (fid, spec, centreline (k, 3), lon); walks: its sidewalk
     runs (dicts with fid, pts, side, w); decks: the bridge decks over the tile [(centreline (k, 3), half
@@ -720,7 +776,7 @@ def place(roads, walks, box, curb_h=0.15, wires=None, town=False, left_hand=Fals
             put(G_BENCH, BENCH_SPACING, _h01(fid, side, "bench") * BENCH_SPACING, w - 0.45, 0.9,
                 lambda out: _yaw(-out[0], -out[1]) + BENCH_YAW)
             put(G_BIN, BIN_SPACING, _h01(fid, side, "bin") * BIN_SPACING, 0.7, 1.1, lambda out: _yaw(-out[0], -out[1]))
-    rows.extend(junction_props(roads, box, curb_h, left_hand, decks, signals, country))
+    rows.extend(junction_props(roads, box, curb_h, left_hand, decks, signals, country, giveways))
     for fid, spec, line, _ in roads:
         if fid in lit or len(line) < 2:
             continue

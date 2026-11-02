@@ -158,6 +158,34 @@ class PrioritySignByCountry(unittest.TestCase):
         self.assertNotEqual(sides[0][2], sides[1][2], "a give-way sign still swaps to the near kerb")
         self.assertEqual(sides[0][4], sides[1][4], "... turned as on the right-hand kerb: its face to the drivers")
 
+    def test_uk_give_way_signs_only_where_needed(self):
+        """TSM chapter 3: a GIVE WAY sign where the minor road joins a primary / trunk road, where OSM maps a give_way
+        node on the arm, and at roundabouts; the road markings alone at other minor junctions (Basildon,
+        2026-11-02)."""
+        def arm(fid, cls, dx, dy, c=(100.0, 100.0)):
+            pts = np.array([(c[0], c[1], 0.0), (c[0] + dx * 80, c[1] + dy * 80, 0.0)])
+            return (fid, roads.Spec(10.0, "paved", True, cls, False), pts, 0.0)
+
+        def kinds(major_cls, giveways=None, country="GB"):
+            tee = [arm("maj_n", major_cls, 0, 1), arm("maj_s", major_cls, 0, -1), arm("min_e", "residential", 1, 0)]
+            return [r[0] for r in furniture.junction_props(tee, (0, 0, 256, 256), left_hand=True,
+                                                           signals=np.zeros((0, 2)), country=country,
+                                                           giveways=giveways)]
+        self.assertEqual(kinds("primary"), [furniture.G_YIELD], "onto an A road: signed")
+        self.assertEqual(kinds("tertiary"), [], "onto a local road: the markings alone")
+        self.assertEqual(kinds("tertiary", giveways=np.array([[108.0, 101.0]])), [furniture.G_YIELD],
+                         "a give_way node mapped on the arm: signed")
+        self.assertEqual(kinds("tertiary", giveways=np.array([[100.0, 160.0]])), [],
+                         "a give_way node on another arm: not this one")
+        self.assertEqual(kinds("tertiary", country="DE"), [furniture.G_STOP], "elsewhere: unchanged")
+
+    def test_give_way_signed_keeps_roundabouts(self):
+        sp = roads.Spec(7.0, "paved", True, "residential", False)
+        a = ("x", sp, np.array([1.0, 0.0]), np.zeros(3))
+        self.assertTrue(furniture.giveway_signed(a, [a], "GB", None, on_ring=True))
+        self.assertFalse(furniture.giveway_signed(a, [a], "GB", None))
+        self.assertTrue(furniture.giveway_signed(a, [a], "FR", None))
+
     def test_give_way_junctions_install_no_stop_controller_for_the_ai(self):
         """navgraph drops G_YIELD, so UK traffic yields on edge priority instead of halting at every side road."""
         put = [(a, k) for a, k in furniture.junction_controls(self.tee(), None, signals=np.zeros((0, 2)),

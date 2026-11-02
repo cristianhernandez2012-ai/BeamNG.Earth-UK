@@ -728,7 +728,10 @@ def _tile_parts(mark, frame, tile, zoom, g, buildings, left_hand, mph, gas_stati
                                  terrain_paint=getattr(_s, "surface", None) is not None, cover_out=cover, marks=marks,
                                  roads_out=near_roads, skin_margin=skin_margin, walks_raw=walks_raw,
                                  signals=furniture.signals_for(_s.md, frame,
-                                                               roadsmod.cells_of_tile(frame, tx, ty, SIGNALS_MARGIN_M)))
+                                                               roadsmod.cells_of_tile(frame, tx, ty, SIGNALS_MARGIN_M)),
+                                 giveways=furniture.giveways_for(_s.md, frame,
+                                                                 roadsmod.cells_of_tile(frame, tx, ty, SIGNALS_MARGIN_M))
+                                 if str(country or "").upper() in furniture.GIVE_WAY_COUNTRIES else None)
     mark("build_tile")
     chunks += railsmod.tile_chunks(frame, tx, ty, cells)     # railway and tram tracks on the ground
     mark("rails")
