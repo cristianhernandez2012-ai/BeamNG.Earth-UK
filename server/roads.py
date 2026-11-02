@@ -6826,7 +6826,8 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
                lines=None, wires=None, town=None, park=None, left_hand=False, structures=(), mph=True, tunnels=None,
                buried=0.0, lamp_region=None, country=None,
                walls=None, deck_context=None, ground=None, terrain_paint=True, cover_out=None, walk_cuts=(),
-               signals=None, marks=None, roads_out=None, skin_margin=0.0, walks_raw=None, giveways=None):
+               signals=None, marks=None, roads_out=None, skin_margin=0.0, walks_raw=None, giveways=None,
+               crossings=None):
     """The chunks of one tile. cells: the mapgeom.Features of the "roads" layer of every cell touching
     the tile; elev(lat, lon) -> metres (the DEM); urban_fn: as road_specs. Features in several cells are
     taken once (by id). The carriageways, then each road's sidewalks / gutters / markings (extras), cut
@@ -7030,6 +7031,13 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
             for _what, line, w, dash in _furn.junction_markings(roads, own_box, left_hand, signals, country):
                 for piece in (_mk.dashes(line, dash) if dash else [line]):
                     chunks.append(_chunk(junctions.STOP_LINE, w, piece))
+            # (and the pedestrian crossings OpenStreetMap maps: zebras, signalled crossings, their zig-zags)
+            import ukcrossings
+            for look_, line, w, dash in ukcrossings.marks(roads, crossings, own_box, left_hand,
+                                                          owns=lambda x, y: box_owns(own_box, x, y)):
+                lk = junctions.CROSSWALK if look_ == "zebra" else junctions.STOP_LINE
+                for piece in (_mk.dashes(line, dash) if dash else [line]):
+                    chunks.append(_chunk(lk, w, piece))
         for cw in crosswalks:                   # crosswalks and stop lines
             mid = 0.5 * (cw["a"] + cw["b"])
             if skin_own(mid[0], mid[1]):

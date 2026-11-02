@@ -426,6 +426,17 @@ def _nav_bridges(aid, frame, elev):
                               prefer=_chain_store("bridges", roadsmod.BridgeProfiles, elev, _bridge_setup))
 
 
+def _crossings(frame, tx, ty, country):
+    """The pedestrian crossings OpenStreetMap maps near road tile (tx, ty) (ukcrossings.crossings_for), where they are
+    painted as such (markings.Style.junction_zebra False: the British Isles); None elsewhere."""
+    import markings as markingsmod
+    if markingsmod.style(country).junction_zebra:
+        return None
+    import roads as roadsmod_
+    import ukcrossings
+    return ukcrossings.crossings_for(_s.md, frame, roadsmod_.cells_of_tile(frame, tx, ty, SIGNALS_MARGIN_M))
+
+
 def navgraph(aid, lat, lon, zoom, x, y, out_dir, vfs_dir, serial, left_hand, mph, rules):
     """earthd.Server.build_navgraph here (a road-tile process): the AI road graph around (x, y) written to out_dir;
     returns (vfs path, nodes, edges), in a road process (in the server's interpreter it cost 13 s of its CPU in a
@@ -731,7 +742,8 @@ def _tile_parts(mark, frame, tile, zoom, g, buildings, left_hand, mph, gas_stati
                                                                roadsmod.cells_of_tile(frame, tx, ty, SIGNALS_MARGIN_M)),
                                  giveways=furniture.giveways_for(_s.md, frame,
                                                                  roadsmod.cells_of_tile(frame, tx, ty, SIGNALS_MARGIN_M))
-                                 if str(country or "").upper() in furniture.GIVE_WAY_COUNTRIES else None)
+                                 if str(country or "").upper() in furniture.GIVE_WAY_COUNTRIES else None,
+                                 crossings=_crossings(frame, tx, ty, country))
     mark("build_tile")
     chunks += railsmod.tile_chunks(frame, tx, ty, cells)     # railway and tram tracks on the ground
     mark("rails")
