@@ -204,6 +204,55 @@ class RulesTest(unittest.TestCase):
         res = roads.Spec(6.0, "paved", True, "residential", False)
         self.assertAlmostEqual(navgraph.road_mph(F, 0, res, mph=False), 25.0)
 
+    def test_great_britain_national_limits_where_none_is_mapped(self):
+        """Unmapped roads in GB take the national limits (30 mph restricted roads in town, 60 single and 70 dual
+        carriageways, 70 motorways), never the US class defaults' 25 and 35 (Basildon, 2026-11-02)."""
+        class F:
+            rules = {}
+        S = lambda cls, urban, oneway=False, median=None: roads.Spec(7.0, "paved", urban, cls, oneway,  # noqa: E731
+                                                                       median=median)
+        cases = [(S("residential", True), 30), (S("tertiary", True), 30), (S("primary", True), 30),
+                 (S("trunk", True, True, 12.0), 70), (S("motorway", True, True, 12.0), 70),
+                 (S("residential", False), 60), (S("primary", False), 60), (S("primary", False, True, 12.0), 70),
+                 (S("motorway", False, True), 70), (S("trunk", False), 60)]
+        for sp, want in cases:
+            with self.subTest(cls=sp.cls, urban=sp.urban, oneway=sp.oneway):
+                self.assertEqual(navgraph.road_mph(F, 0, sp, country="GB"), want)
+                self.assertEqual(navgraph.road_mph(F, 0, sp, country="gb"), want)
+        self.assertEqual(navgraph.road_mph(F, 0, S("service", True), country="GB"), navgraph.DRIVE["service"][1])
+        self.assertEqual(navgraph.road_mph(F, 0, S("residential", True)), 25.0, "elsewhere: unchanged")
+        self.assertEqual(navgraph.road_mph(F, 0, S("tertiary", True), country="US"), 30.0)
+
+    def test_an_unmapped_piece_takes_the_limit_of_the_street_it_joins(self):
+        """OpenStreetMap maps a street's limit on all but a piece (Southernhay, Basildon): the piece takes the value
+        of the same-named pieces it joins when they agree; otherwise the default stands."""
+        lines = [[(0, 0), (100, 0)], [(100, 0), (140, 0)], [(140, 0), (300, 0)], [(140, 0), (140, 200)]]
+        f = features(lines, ["tertiary"] * 4)
+        f.attrs["name"] = np.array(["Southernhay", "Southernhay", "Southernhay", "Other Road"])
+        mph30 = 30 * 1.609344
+        f.rules["max_speed_kmh"] = rules([(0, mph30, 0, 1), (2, mph30, 0, 1), (3, 64.4, 0, 1)], "float")
+        sp = roads.Spec(7.0, "paved", True, "tertiary", False)
+        res = roads.Spec(7.0, "paved", True, "residential", False)
+        self.assertAlmostEqual(navgraph.road_mph(f, 1, res, country="US"), 30.0, delta=0.05,
+                               msg="the neighbours' 30, not the residential default's 25")
+        self.assertAlmostEqual(navgraph.road_mph(f, 1, sp), 30.0, delta=0.05)
+        # the neighbours disagree: no inheritance, the default
+        f2 = features(lines, ["tertiary"] * 4)
+        f2.attrs["name"] = f.attrs["name"]
+        f2.rules["max_speed_kmh"] = rules([(0, mph30, 0, 1), (2, 64.4, 0, 1)], "float")
+        self.assertEqual(navgraph.inherited_kmh(f2, 1), None)
+        self.assertAlmostEqual(navgraph.road_mph(f2, 1, sp, country="GB"), 30.0)
+        # one mapped neighbour of 40 mph on one end only: taken
+        f3 = features(lines, ["tertiary"] * 4)
+        f3.attrs["name"] = f.attrs["name"]
+        f3.rules["max_speed_kmh"] = rules([(2, 40 * 1.609344, 0, 1)], "float")
+        self.assertAlmostEqual(navgraph.road_mph(f3, 1, sp, country="GB"), 40.0, delta=0.05)
+        # another street's limit at the shared junction is not taken
+        f4 = features(lines, ["tertiary"] * 4)
+        f4.attrs["name"] = f.attrs["name"]
+        f4.rules["max_speed_kmh"] = rules([(3, 64.4, 0, 1)], "float")
+        self.assertIsNone(navgraph.inherited_kmh(f4, 1))
+
     def test_driving_side_and_signals_by_country(self):
         self.assertEqual(navgraph.road_rules("US"), {"rightHandDrive": False, "turnOnRed": True, "redYellow": False,
                                                      "country": "US", "mph": True})

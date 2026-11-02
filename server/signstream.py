@@ -71,7 +71,7 @@ def build_tile(md, frame, aid, tx, ty, elev, out_dir, vfs_dir, urban=None, width
             if len(ring) >= 2:
                 pts = np.column_stack(frame.geodetic_to_enu(ring[:, 1], ring[:, 0], 0.))
                 decks.append({'deck': True, 'n': pts, 'w': spec.width})
-    speeds = _speeds(frame, tx, ty, elev, context, decks, left_hand, mph, speedsigns.style(country, us))
+    speeds = _speeds(frame, tx, ty, elev, context, decks, left_hand, mph, speedsigns.style(country, us), country)
     if not (WORLD or us):
         return write_tile(out_dir, vfs_dir, aid, tx, ty, (None, None, None, speeds))     # (not the US: no guide signs)
     exits, miles = highwaysigns.build_tile(md, frame, tx, ty, elev, decks, left_hand, mph, urban, widths)
@@ -82,11 +82,11 @@ def build_tile(md, frame, aid, tx, ty, elev, out_dir, vfs_dir, urban=None, width
 _warned = -float('inf')
 
 
-def _speeds(frame, tx, ty, elev, context, decks, left_hand, mph, face):
+def _speeds(frame, tx, ty, elev, context, decks, left_hand, mph, face, country=None):
     """speedsigns.build_tile, or None: optional scenery never stops the other signs."""
     global _warned
     try:
-        return speedsigns.build_tile(frame, tx, ty, elev, context, decks, left_hand, mph, face)
+        return speedsigns.build_tile(frame, tx, ty, elev, context, decks, left_hand, mph, face, country)
     except Exception as error:
         now = time.monotonic()
         if now - _warned >= 60.:

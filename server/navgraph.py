@@ -26,6 +26,15 @@ URBAN_MPH_CAP = {"primary": 35, "secondary": 35, "tertiary": 30}   # in town (sp
 # the km/h countries' rural defaults for the fast classes (Europe's 120-130 motorways: Bavaria's A9, unmapped, was
 # driven at the US 65 mph, 2026-10-15)
 KMH_DEFAULT = {"motorway": 120, "trunk": 100, "primary": 80, "secondary": 70}
+# National speed limits where a road's own is not mapped (mph): Great Britain's (Road Traffic Regulation Act 1984 s.81:
+# 30 mph on a restricted road, one with a system of street lighting, taken here as a road in town (spec.urban) other
+# than a motorway or trunk road; The Motorways Traffic (Speed Limit) Regulations 1974 and the 70 mph, 60 mph and 50 mph
+# (Temporary Speed Limit) (Continuation) Order 1978: 70 mph on motorways and dual carriageways, 60 mph on single
+# carriageways). The US class defaults (DRIVE, URBAN_MPH_CAP) posted 25 and 35 mph signs on Basildon's unmapped
+# pieces, where every limit is 20, 30, 40, 50, 60 or 70 (the user, 2026-11-02). Driveways, car parks and living streets
+# keep the AI's slow class speeds (no national limit of their own).
+NATIONAL_MPH = {"GB": {"restricted": 30, "single": 60, "dual": 70}}
+NATIONAL_SLOW = {"living_street", "service", "unknown"}
 MPH = 0.44704
 LANE_W_M = 3.3
 SIMPLIFY_M = 0.6            # a shape point is kept where the chord would be off by more than this
@@ -40,25 +49,89 @@ RING_MS = 30.0 / 3.6
 ENTRY_DRIVABILITY = 0.9     # stock AI yields to the ring's 1.0, even on a tangential entry
 
 
-def road_mph(feats, i, spec, mph=True, at=0.5):
-    """The speed limit (mph) of road feature i at fraction at (default: its middle), else the class default
-    (capped in town for arterials), or None for a class the AI does not drive. Shared by the graph and the speed-limit
-    signs (speedsigns.py), so a sign shows what the traffic drives."""
+def road_mph(feats, i, spec, mph=True, at=0.5, country=None):
+    """The speed limit (mph) of road feature i at fraction at (default: its middle); unmapped, the limit mapped on the
+    pieces of the same street it joins (inherited_kmh), else the country's default (default_mph), or None for a class
+    the AI does not drive. Shared by the graph and the speed-limit signs (speedsigns.py), so a sign shows what the
+    traffic drives."""
     if spec is None or spec.cls not in DRIVE:
         return None
     speed = feats.rules.get("max_speed_kmh")
     if speed is not None:
-        for r in speed.rows(i):
+        rows = speed.rows(i)
+        for r in rows:
             if speed.start[r] <= at <= speed.end[r]:
                 value = float(speed.value[r])
                 if math.isfinite(value) and value > 0:
                     return value / 1.609344
+        if not len(rows):
+            got = inherited_kmh(feats, i)
+            if got is not None:
+                return got / 1.609344
+    return default_mph(spec, mph, country)
+
+
+def default_mph(spec, mph=True, country=None):
+    """The limit (mph) of a road whose own is not mapped: the country's national limits (NATIONAL_MPH), else the class
+    default the traffic drives (DRIVE: the US's; KMH_DEFAULT for the fast classes where km/h are posted), capped in
+    town for arterials."""
+    nat = NATIONAL_MPH.get(str(country or "").upper())
+    if nat is not None and spec.cls not in NATIONAL_SLOW:
+        if spec.urban and spec.cls not in ("motorway", "trunk"):
+            return float(nat["restricted"])
+        dual = spec.cls == "motorway" or (spec.oneway and getattr(spec, "median", None) is not None)
+        return float(nat["dual" if dual else "single"])
     v = DRIVE[spec.cls][1]
     if not mph and spec.cls in KMH_DEFAULT:
         v = KMH_DEFAULT[spec.cls] / 1.609344
     if spec.urban and spec.cls in URBAN_MPH_CAP:
         v = min(v, URBAN_MPH_CAP[spec.cls])
     return float(v)
+
+
+def _end_keys(feats, j):
+    """The two end points of feature j's line, rounded to ~0.1 m (Overture splits a street at its connectors: the
+    pieces share their end coordinates exactly)."""
+    parts = feats.parts(j)
+    if not parts or not len(parts[0]) or len(parts[0][0]) < 2:
+        return ()
+    ln = parts[0][0]
+    return tuple((round(float(p[0]), 6), round(float(p[1]), 6)) for p in (ln[0], ln[-1]))
+
+
+def inherited_kmh(feats, i):
+    """The limit (km/h) of feature i, which has none mapped, from the pieces of the same street (same name) it joins
+    end to end: their one mapped value when every such piece that has one agrees, else None. OpenStreetMap often maps
+    a street's limit on all but a short piece (Southernhay, Basildon: 30 mph either side of an unmapped piece, which
+    took a class default; the user, 2026-11-02). Pure; the end index is kept on the decoded cell."""
+    speed = feats.rules.get("max_speed_kmh")
+    names = feats.attrs.get("name")
+    if speed is None or names is None:
+        return None
+    nm = str(names[i] or "").strip()
+    if not nm or nm == "None":
+        return None
+    index = feats.__dict__.get("_limit_ends")
+    if index is None:
+        index = {}
+        for j in range(len(feats)):
+            nj = str(names[j] or "").strip()
+            if nj and nj != "None":
+                for key in _end_keys(feats, j):
+                    index.setdefault((nj, key), []).append(j)
+        feats.__dict__["_limit_ends"] = index
+    got = set()
+    for key in _end_keys(feats, i):
+        for j in index.get((nm, key), ()):
+            if j == i:
+                continue
+            vals = {round(float(speed.value[r]), 1) for r in speed.rows(j)
+                    if math.isfinite(float(speed.value[r])) and float(speed.value[r]) > 0}
+            if len(vals) == 1:
+                got |= vals
+            elif len(vals) > 1:
+                got |= {None}           # a neighbour whose limit changes along it: not a clear answer
+    return got.pop() if len(got) == 1 and None not in got else None
 
 
 def _rdp(p, tol):
@@ -318,7 +391,7 @@ def build(frame, feats_list, elev, centre, urban_fn=None, window=WINDOW_M, decks
                         pending[nm] = (float(q[0]), float(q[1]))
                         node_fid[nm] = fid
                         pending_by[nm] = (-w, fid)
-                legal = road_mph(feats, i, spec, mph, at=(full[j] + full[j + 1]) / (2 * L)) * MPH
+                legal = road_mph(feats, i, spec, mph, at=(full[j] + full[j + 1]) / (2 * L), country=country) * MPH
                 target = min(legal, float(profile[j]), float(profile[j + 1]))
                 edges.append([a, b, 1 if direction else 0, lo, li, round(target, 2), driv, round(w / 2, 2)])
                 edge_fids.append(fid)
