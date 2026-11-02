@@ -179,6 +179,31 @@ class PrioritySignByCountry(unittest.TestCase):
                          "a give_way node on another arm: not this one")
         self.assertEqual(kinds("tertiary", country="DE"), [furniture.G_STOP], "elsewhere: unchanged")
 
+    def test_no_entry_pair_at_a_one_way_roads_exit(self):
+        """TSRGD diagram 616: a NO ENTRY sign each side of a one-way road's exit end where it comes into a junction,
+        facing the drivers who would turn into it; none in the US (another sign), none on a divided road's
+        carriageway."""
+        def arm(fid, cls, dx, dy, oneway=False, d=0, median=None, c=(100.0, 100.0)):
+            pts = np.array([(c[0], c[1], 0.0), (c[0] + dx * 80, c[1] + dy * 80, 0.0)])
+            return (fid, roads.Spec(7.0, "paved", True, cls, oneway, dir=d, median=median), pts, 0.0)
+        tee = [arm("n", "tertiary", 0, 1), arm("s", "tertiary", 0, -1), arm("e", "residential", 1, 0, True, -1)]
+        rows = furniture.junction_props(tee, (0, 0, 256, 256), left_hand=True, signals=np.zeros((0, 2)), country="GB")
+        ne = [r for r in rows if r[0] == furniture.G_NOENTRY]
+        self.assertEqual(len(ne), 2, "a pair")
+        self.assertTrue(all(r[1] > 100 for r in ne), "on the one-way arm (east)")
+        self.assertEqual(sorted(r[2] > 100 for r in ne), [False, True], "one each side")
+        self.assertEqual({r[4] for r in ne}, {furniture._yaw(0.0, -1.0)}, "facing back to the junction")
+        tee_out = tee[:2] + [arm("e", "residential", 1, 0, True, 1)]
+        self.assertFalse([r for r in furniture.junction_props(tee_out, (0, 0, 256, 256), left_hand=True,
+                                                               signals=np.zeros((0, 2)), country="GB")
+                          if r[0] == furniture.G_NOENTRY], "one-way away from the junction: drivers may turn in")
+        self.assertFalse([r for r in furniture.junction_props(tee, (0, 0, 256, 256), signals=np.zeros((0, 2)),
+                                                               country="US") if r[0] == furniture.G_NOENTRY])
+        div = tee[:2] + [arm("e", "residential", 1, 0, True, -1, median=12.0)]
+        self.assertFalse([r for r in furniture.junction_props(div, (0, 0, 256, 256), left_hand=True,
+                                                               signals=np.zeros((0, 2)), country="GB")
+                          if r[0] == furniture.G_NOENTRY], "a divided road's carriageway: none")
+
     def test_give_way_signed_keeps_roundabouts(self):
         sp = roads.Spec(7.0, "paved", True, "residential", False)
         a = ("x", sp, np.array([1.0, 0.0]), np.zeros(3))

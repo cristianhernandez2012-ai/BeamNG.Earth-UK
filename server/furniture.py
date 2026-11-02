@@ -199,6 +199,10 @@ def wire_mesh(lines, origin):
 MAJOR = {"primary", "secondary", "tertiary", "trunk"}
 MINOR = {"residential", "unclassified", "living_street"}
 G_SIGNAL, G_STOP, G_YIELD = "signal", "stop", "giveway"
+G_NOENTRY = "noentry"       # the Vienna Convention's C1 / TSRGD diagram 616 (trees.lua: the stock Italian sign)
+# Countries whose signs are the Vienna Convention's (the stock Italian sign models read right there); not the
+# MUTCD's (US, Canada: DO NOT ENTER is another sign) nor unknown places
+NOENTRY_OFF = {"US", "CA"}
 JUNCTION_SNAP_M = 1.0       # road ends this close are one junction
 
 # Countries where the minor arm of an ordinary priority junction is signed GIVE WAY, not STOP. In Great Britain the
@@ -485,6 +489,44 @@ def junction_spot(c, u, what, wide, half, lines, left_hand=False):
     return None if q is None else (q, _yaw(face[0], face[1]))
 
 
+NOENTRY_CLASSES = {"residential", "unclassified", "tertiary", "secondary", "primary", "living_street", "service"}
+
+
+def _inbound(a):
+    """Does traffic on arm a (fid, spec, u, p, at its start[, length]) only come into the junction (one-way towards
+    it: its exit end, where nobody may turn in)?"""
+    if len(a) < 5 or not a[1].oneway or not getattr(a[1], "dir", 0):
+        return False
+    return not _outbound(a)
+
+
+def _noentry_rows(arms, curb_h, lines, box, skip=()):
+    """The NO ENTRY pair (TSRGD 2016 diagram 616, a sign on each side) at the exit end of a one-way road, where it comes
+    into a junction (_inbound), facing the drivers who would turn into it; not on a divided road's carriageways
+    (spec.median: the central reservation's keep-left signs, not these), on links, nor on skip's roads (a roundabout's
+    entry and exit lanes: islands.ring_approaches). Their yaw is the right-hand-kerb sign's turned round
+    (junction_spot), whichever side traffic drives on."""
+    rows = []
+    x0, y0, x1, y1 = box
+    wide = max(a[1].width for a in arms) / 2
+    for arm in arms:
+        spec = arm[1]
+        if not _inbound(arm) or spec.cls not in NOENTRY_CLASSES or getattr(spec, "median", None) is not None \
+                or getattr(spec, "link", False) or arm[0] in skip or (len(arm) >= 6 and arm[5] < wide + 6.0):
+            continue
+        u, c = np.asarray(arm[2], np.float64), np.asarray(arm[3], np.float64)
+        face = -prop_side(u, G_STOP, False)         # (facing back to the junction: the drivers who would enter)
+        yaw = _yaw(face[0], face[1])
+        left = np.array([-u[1], u[0]])
+        for side in (left, -left):
+            q = signal_spot(c, u, side, wide, spec.width / 2, lines)
+            if q is None or not (x0 - 20 <= q[0] < x1 + 20 and y0 - 20 <= q[1] < y1 + 20):
+                continue
+            rows.append([G_NOENTRY, round(float(q[0]), 2), round(float(q[1]), 2), round(float(c[2] + curb_h), 2),
+                         round(yaw, 1), 1.0, 3.0, 0.0])
+    return rows
+
+
 def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=None, country=None, giveways=None):
     """Signals at the junctions with a mapped traffic signal (signals: mapped_signals'; None: at urban junctions of
     two or more major roads), priority signs at urban junctions
@@ -501,6 +543,7 @@ def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=N
     ring = islands.ring_fids(roads)
     lines = [(spec.width / 2, np.asarray(pts, np.float64)[:, :2]) for _, spec, pts, _ in roads if len(pts) >= 2]
     lines += [(float(h), np.asarray(pts, np.float64)[:, :2]) for pts, h in decks if len(pts) >= 2]
+    approaches = None
     for k, arms in junctions.items():
         on_ring = sum(1 for a in arms if a[0] in ring) >= 2
         if len(arms) < 3 or (not on_ring and not _controlled_here(arms, signals)):
@@ -508,6 +551,10 @@ def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=N
         p = arms[0][3]
         if not (_owns(box, p[0], p[1])):
             continue
+        if country and str(country).upper() not in NOENTRY_OFF and not on_ring:
+            if approaches is None:
+                approaches = islands.ring_approaches(roads, ring) if ring else set()
+            rows.extend(_noentry_rows(arms, curb_h, lines, box, approaches))
         put = junction_controls(arms, k, link_ok, ring, signals, country)
         if not put:
             continue
