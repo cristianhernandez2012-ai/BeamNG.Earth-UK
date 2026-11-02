@@ -179,6 +179,27 @@ class GlueTest(unittest.TestCase):
             roads.road_specs = real
         self.assertEqual(Feats.calls, 1)
 
+    def test_great_britain_posts_only_limits_other_than_the_national_one(self):
+        """In GB the national limits are not signed (30 mph in town, 60 single, 70 dual carriageway): a piece gets a
+        value only where OpenStreetMap maps another limit; an unmapped piece gets none (Basildon, 2026-11-02)."""
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
+        import roads
+        from test_roads import features, rules
+        f = features([[(0, 0), (400, 0)], [(400, 0), (800, 0)], [(800, 0), (1200, 0)]], ["residential"] * 3)
+        f.attrs["name"] = np.array(["A Road", "B Road", "C Road"])
+        mph = 1.609344
+        f.rules["max_speed_kmh"] = rules([(0, 30 * mph, 0, 0.5), (0, 40 * mph, 0.5, 1), (1, 20 * mph, 0, 1)], "float")
+        town = roads.Spec(7.0, "paved", True, "residential", False)
+        country = roads.Spec(7.0, "paved", False, "residential", False)
+        self.assertEqual(speedsigns._limits(f, 0, town, True, "GB"), [(0.0, 0.0), (0.5, 40.0)],
+                         "30 in town: the national limit, not signed; 40: signed")
+        self.assertEqual(speedsigns._limits(f, 1, town, True, "GB"), [(0.0, 20.0)])
+        self.assertEqual(speedsigns._limits(f, 2, town, True, "GB"), [(0.0, 0.0)], "unmapped: no sign")
+        self.assertEqual(speedsigns._limits(f, 2, country, True, "GB"), [(0.0, 0.0)], "unmapped: no 60 guessed")
+        self.assertEqual(speedsigns._limits(f, 0, country, True, "GB"), [(0.0, 30.0), (0.5, 40.0)],
+                         "out of town 30 is not the national limit: signed")
+        self.assertEqual(speedsigns._limits(f, 2, town, True, "US"), [(0.0, 25.0)], "elsewhere: unchanged")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -56,19 +56,27 @@ def road_mph(feats, i, spec, mph=True, at=0.5, country=None):
     traffic drives."""
     if spec is None or spec.cls not in DRIVE:
         return None
+    got = mapped_mph(feats, i, at)
+    return got if got is not None else default_mph(spec, mph, country)
+
+
+def mapped_mph(feats, i, at=0.5):
+    """The limit (mph) OpenStreetMap / Overture give road feature i at fraction at: its own, else the one mapped on the
+    pieces of the same street it joins (inherited_kmh); None when the map says nothing."""
     speed = feats.rules.get("max_speed_kmh")
-    if speed is not None:
-        rows = speed.rows(i)
-        for r in rows:
-            if speed.start[r] <= at <= speed.end[r]:
-                value = float(speed.value[r])
-                if math.isfinite(value) and value > 0:
-                    return value / 1.609344
-        if not len(rows):
-            got = inherited_kmh(feats, i)
-            if got is not None:
-                return got / 1.609344
-    return default_mph(spec, mph, country)
+    if speed is None:
+        return None
+    rows = speed.rows(i)
+    for r in rows:
+        if speed.start[r] <= at <= speed.end[r]:
+            value = float(speed.value[r])
+            if math.isfinite(value) and value > 0:
+                return value / 1.609344
+    if not len(rows):
+        got = inherited_kmh(feats, i)
+        if got is not None:
+            return got / 1.609344
+    return None
 
 
 def default_mph(spec, mph=True, country=None):

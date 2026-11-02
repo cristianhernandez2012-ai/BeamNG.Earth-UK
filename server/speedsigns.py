@@ -50,7 +50,13 @@ def style(country, us):
 
 
 def _limits(feats, i, spec, mph, country=None):
-    """[(fraction, posted value)] of feature i from 0 on: road_mph (the AI's) on each piece of its speed rules."""
+    """[(fraction, posted value)] of feature i from 0 on: road_mph (the AI's) on each piece of its speed rules. In a
+    country with national limits (navgraph.NATIONAL_MPH: Great Britain) only a mapped limit other than the national
+    one for the road is posted (0: no sign): the national limits are not signed there (a street with no sign is 30 mph
+    in town, 60 on a single and 70 on a dual carriageway), the signs stand where the limit is not the standard one
+    (the user, Basildon 2026-11-02: "solo hay senales de limite de velocidad donde no son estandar"). Unmapped
+    pieces, where the AI drives the national limit, get none: nothing is guessed onto a sign."""
+    national = str(country or "").upper() in navgraph.NATIONAL_MPH
     cuts = {0.0}
     table = feats.rules.get("max_speed_kmh")
     if table is not None:
@@ -61,7 +67,14 @@ def _limits(feats, i, spec, mph, country=None):
     cuts = sorted(cuts) + [1.0]
     out = []
     for a, b in zip(cuts[:-1], cuts[1:]):
-        v = posted(navgraph.road_mph(feats, i, spec, mph, at=(a + b) / 2, country=country), mph)
+        if national:
+            got = navgraph.mapped_mph(feats, i, at=(a + b) / 2) if spec is not None and spec.cls in navgraph.DRIVE \
+                else None
+            v = posted(got, mph) if got is not None else 0.0
+            if v and v == posted(navgraph.default_mph(spec, mph, country), mph):
+                v = 0.0                 # the national limit: not signed
+        else:
+            v = posted(navgraph.road_mph(feats, i, spec, mph, at=(a + b) / 2, country=country), mph)
         if not out or out[-1][1] != v:
             out.append((a, v))
     return out
