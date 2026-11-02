@@ -3504,7 +3504,9 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None):
         def at(off):
             return offset_polyline(pts, off) if abs(off) > 1e-6 else pts.copy()
         for off, role, how in plan:
-            if role == "lane":
+            if role == "bus":               # a bus lane's edge: solid, wide (TSRGD diagram 1049)
+                mark("lane", "line_white", markings.BUS_LINE_W, at(off))
+            elif role == "lane":
                 mark("lane", "line_white", lw_, at(off), None if how else pat)
             elif role == "twltl":           # solid on the through side, broken on the turn lane's (MUTCD 3B.05)
                 mark("centre", st.centre, lw_, at(off + how * d))

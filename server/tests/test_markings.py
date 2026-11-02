@@ -31,6 +31,35 @@ class DashTest(unittest.TestCase):
         np.testing.assert_allclose(moved[0][0, :2], [1, 0], err_msg="the cycle 11 m on: 1 m into the next dash")
 
 
+class BusLaneTest(unittest.TestCase):
+    """A bus lane's edge: solid and 250 mm wide (TSRGD diagram 1049), from bus:lanes or busway=lane."""
+
+    def test_one_way_bus_lanes_left_to_right(self):
+        plan = markings.lane_plan({"bus:lanes": "designated|yes|"}, False, 9.9, 3)
+        self.assertEqual([r for _o, r, _h in plan], ["lane", "bus"], "between the bus lanes a lane line, then the edge")
+        self.assertAlmostEqual(plan[1][0], 9.9 / 2 - 2 * 3.3)
+        self.assertEqual([r for _o, r, _h in markings.lane_plan({"bus:lanes": "|designated"}, False, 7.0, 2)],
+                         ["bus"])
+        self.assertEqual([r for _o, r, _h in markings.lane_plan({"bus:lanes": "yes|no|"}, False, 9.9, 2)],
+                         ["lane"], "a count that does not match the lanes: ignored")
+
+    def test_busway_lane_the_kerbside_lane_each_way(self):
+        for lh in (False, True):
+            plan = markings.lane_plan({"busway": "lane"}, True, 13.2, 4, left_hand=lh)
+            roles = sorted((round(o, 2), r) for o, r, _h in plan)
+            self.assertEqual(roles, [(-3.3, "bus"), (0.0, "centre"), (3.3, "bus")], lh)
+        self.assertNotIn("bus", [r for _o, r, _h in markings.lane_plan({"busway": "lane"}, True, 7.0, 2)],
+                         "two lanes: no room for one")
+
+    def test_drawn_wide_and_solid(self):
+        import roads
+        sp = roads.Spec(9.9, "paved", True, "primary", True, dir=1)
+        pts = np.array([(0.0, 0.0, 0.0), (200.0, 0.0, 0.0)])
+        ex = roads.extras(sp, pts, 0.0, False, "GB", {"bus:lanes": "designated||", "lanes": "3"})
+        wide = [e for e in ex if abs(e[1] - markings.BUS_LINE_W) < 1e-9]
+        self.assertEqual(len(wide), 1, [e[1] for e in ex])
+
+
 class LanePlanTest(unittest.TestCase):
     def test_none_without_tags(self):
         self.assertIsNone(markings.lane_plan({}, True, 7.0, 2))

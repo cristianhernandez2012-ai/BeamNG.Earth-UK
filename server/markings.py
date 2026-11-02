@@ -110,11 +110,17 @@ def _no_change(a, b):
     return a in ("no", "not_right", "only_left") or b in ("no", "not_left", "only_right")
 
 
+# OpenStreetMap's bus:lanes values of a bus lane (a lane where buses may drive and others may not, or which is theirs);
+# its edge is the bus lane's solid line (TSRGD 2016 diagram 1049: 250 mm, 300 mm on faster roads)
+BUS_LANE_VALUES = {"designated", "yes", "only"}
+BUS_LINE_W = 0.25
+
+
 def lane_plan(osm, two_way, drive, lanes, left_hand=False):
     """The lines across a carriageway from OpenStreetMap's lane tags (osm: {key: value} of railtags.LANE_COLUMNS, may
     be empty): [(offset m, left of the line's direction, positive left; role, solid)]. role: "centre" (between the
     directions), "twltl" (a two-way turn lane's edge: solid outside, broken inside), "lane" (between lanes of one
-    direction). solid: for "lane" True / False; for "centre" None (broken), "double", "solid_right" / "solid_left" (the
+    direction), "bus" (a bus lane's edge: bus:lanes on a one-way road, busway=lane the kerbside lane each way). solid: for "lane" True / False; for "centre" None (broken), "double", "solid_right" / "solid_left" (the
     side that may not pass); for "twltl" the through lanes' side (+1 left, -1 right). Without lane tags: None
     (roads.extras' own count). Pure."""
     osm = {k: v for k, v in (osm or {}).items() if v not in (None, "")}
@@ -125,13 +131,18 @@ def lane_plan(osm, two_way, drive, lanes, left_hand=False):
     if not two_way:
         n = lanes
         ch = _vals(osm.get("change:lanes"))
+        bus = _vals(osm.get("bus:lanes"))
+        bus = [b in BUS_LANE_VALUES for b in bus] if bus is not None and len(bus) == n else None
         lw = drive / max(n, 1)
         out = []
         for k in range(1, n):
             solid = ch is not None and len(ch) == n and _no_change(ch[k - 1], ch[k])
             # lanes left to right in travel: lane k's left edge at -drive/2 + k * lw from the right? (offsets are left
             # positive: the leftmost lane starts at +drive/2)
-            out.append((drive / 2 - k * lw, "lane", solid))
+            if bus is not None and bus[k - 1] != bus[k]:
+                out.append((drive / 2 - k * lw, "bus", True))       # (a bus lane's edge: TSRGD diagram 1049)
+            else:
+                out.append((drive / 2 - k * lw, "lane", solid))
         return out
     if fwd is None and bwd is None:
         if lanes and lanes - both >= 2:
@@ -176,6 +187,11 @@ def lane_plan(osm, two_way, drive, lanes, left_hand=False):
         off = c_right - k * lw
         solid = ch_r is not None and len(ch_r) == right_n and _no_change(ch_r[k - 1], ch_r[k])
         out.append((off, "lane", solid))
+    if str(osm.get("busway") or "").lower() in ("lane", "opposite_lane"):
+        # a with-flow bus lane on each side (busway=lane): the kerbside lane of each direction (either side of the way
+        # whichever side traffic drives on: the outermost lanes), its edge the diagram 1049 line
+        bus_offs = ([edge - lw] if left_n >= 2 else []) + ([c_right - (right_n - 1) * lw] if right_n >= 2 else [])
+        out = [(o, "bus", True) if any(abs(o - b) < 1e-6 for b in bus_offs) else (o, r, h) for o, r, h in out]
     return out
 
 
