@@ -525,6 +525,65 @@ def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=N
     return rows
 
 
+# The junction road markings in the British Isles (markings.Style.junction_zebra False), per arm by its control
+# (junction_controls: the same decision as the signs and the AI): G_YIELD the give-way line, TSRGD 2016 diagram 1003
+# (two broken lines 200 mm wide and 200 mm apart, 600 mm marks and 300 mm gaps), G_SIGNAL the stop line at signals
+# (diagram 1001, 300 mm), G_STOP the STOP line (diagram 1002.1, 300 mm); across the arm's incoming half (all of a
+# one-way arm), MARK_BACK_M past the junction's widest carriageway edge.
+GIVEWAY_LINE_W = 0.2
+GIVEWAY_LINE_GAP = 0.2
+GIVEWAY_DASH = (0.6, 0.3)
+STOP_MARK_W = 0.3
+MARK_BACK_M = 0.5
+MARK_KERB_M = 0.2           # m inside the kerb a line ends
+MARK_CENTRE_M = 0.1         # m off the centre line a half-width line starts
+
+
+def junction_markings(roads, box, left_hand=False, signals=None, country=None):
+    """[(kind, (k, 3) line, width, dashes or None)] of the junctions in box (junction_props' junctions: the ones it
+    gives signs or signals): kind G_YIELD (diagram 1003: two broken lines), G_SIGNAL or G_STOP (one solid line).
+    dashes: (mark, gap) m. Pure."""
+    out = []
+    junctions = _arms(roads)
+    link_ok = _link_check(junctions, signals)
+    import islands
+    ring = islands.ring_fids(roads)
+    for k, arms in junctions.items():
+        on_ring = sum(1 for a in arms if a[0] in ring) >= 2
+        if len(arms) < 3 or (not on_ring and not _controlled_here(arms, signals)):
+            continue
+        p = arms[0][3]
+        if not _owns(box, p[0], p[1]):
+            continue
+        put = junction_controls(arms, k, link_ok, ring, signals, country)
+        if not put:
+            continue
+        wide = max(a[1].width for a in arms) / 2
+        for arm, what in put:
+            if _outbound(arm):
+                continue
+            spec, u, c = arm[1], np.asarray(arm[2], np.float64), np.asarray(arm[3], np.float64)
+            half = spec.width / 2
+            inc = -u
+            near = np.array([-inc[1], inc[0]]) if left_hand else np.array([inc[1], -inc[0]])  # the incoming half's side
+            one_way_in = bool(spec.oneway) and getattr(spec, "dir", 0)
+            lo, hi = (-half + MARK_KERB_M, half - MARK_KERB_M) if one_way_in else (MARK_CENTRE_M, half - MARK_KERB_M)
+            if hi - lo < 0.5:
+                continue
+            z = float(c[2]) if len(c) > 2 else 0.0
+            if what == G_YIELD:
+                for back in (MARK_BACK_M + GIVEWAY_LINE_W / 2,
+                             MARK_BACK_M + 1.5 * GIVEWAY_LINE_W + GIVEWAY_LINE_GAP):
+                    m = c[:2] + u * (wide + back)
+                    a, b = m + near * lo, m + near * hi
+                    out.append((what, np.array([[a[0], a[1], z], [b[0], b[1], z]]), GIVEWAY_LINE_W, GIVEWAY_DASH))
+            else:
+                m = c[:2] + u * (wide + MARK_BACK_M + STOP_MARK_W / 2)
+                a, b = m + near * lo, m + near * hi
+                out.append((what, np.array([[a[0], a[1], z], [b[0], b[1], z]]), STOP_MARK_W, None))
+    return out
+
+
 # The mod's round km/h sign models (trees.lua's speedk<n>, tools/generate_kmh_speed_signs.py; PR #195). Not placed since
 # 2026-10-28: the speed-limit signs are the sign tiles' (speedsigns.py: where the limit changes, past major junctions,
 # drawn in each region's style), which replaced the props that stood 30 m after both ends of every long segment.

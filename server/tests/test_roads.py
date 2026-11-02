@@ -551,6 +551,34 @@ class BuildTileTest(unittest.TestCase):
             back = (M == 0) & (n[:, 2] > 0.5) & (n[:, 2] < 0.95) & ((n[:, :2] @ out[1]) > 0.3)
             self.assertTrue(back.any(), "a sloped back face")
 
+    def test_british_junctions_carry_the_give_way_line_not_a_crosswalk(self):
+        """In the British Isles a junction's arms carry the line their control asks for (TSRGD diagram 1003 at a
+        give-way: two broken lines across the incoming half), no crosswalk on every arm (Basildon, 2026-11-02)."""
+        import junctions
+        import furniture
+        X = np.array((120.0, 120.0))
+        arms = [[tuple(X), (120, 300)], [tuple(X), (120, -60)], [tuple(X), (300, 120)]]
+        f = features(arms, ["tertiary", "tertiary", "residential"])
+        walks = []
+        chunks = roads.build_tile(FRAME, 0, 0, [f], flat, lambda la, lo: np.ones(np.shape(la), bool), walks=walks,
+                                  left_hand=True, country="GB", signals=np.zeros((0, 2)))
+        self.assertFalse([c for c in chunks if c["m"] == junctions.CROSSWALK["m"]], "no crosswalk")
+        gw = [c for c in chunks if c["m"] == junctions.STOP_LINE["m"] and c["w"] == furniture.GIVEWAY_LINE_W]
+        self.assertGreaterEqual(len(gw), 4, "two broken lines, several marks each")
+        for c in gw:
+            p = np.array(c["n"])[:, :2]
+            self.assertTrue((p[:, 0] > X[0]).all(), "on the residential arm (east)")
+            self.assertTrue((p[:, 1] < X[1] + 0.01).all(), "across its incoming half: the left of westbound traffic")
+            self.assertLess(float(np.hypot(*(p[-1] - p[0]))), 0.65, "600 mm marks")
+        xs = sorted({round(float(np.mean(np.array(c["n"])[:, 0])), 1) for c in gw})
+        self.assertEqual(len(xs), 2, "two lines")
+        self.assertAlmostEqual(xs[1] - xs[0], furniture.GIVEWAY_LINE_W + furniture.GIVEWAY_LINE_GAP, delta=0.05)
+        # the same junction elsewhere: the crosswalks as before
+        us = roads.build_tile(FRAME, 0, 0, [f], flat, lambda la, lo: np.ones(np.shape(la), bool), walks=[],
+                              country="US", signals=np.zeros((0, 2)))
+        self.assertTrue([c for c in us if c["m"] == junctions.CROSSWALK["m"]])
+        self.assertFalse([c for c in us if c["w"] == furniture.GIVEWAY_LINE_W and c["m"] == junctions.STOP_LINE["m"]])
+
     def test_stop_lines_lie_across_the_incoming_half_on_either_side_of_the_road(self):
         """The stop line crosses the half whose traffic comes into the junction: the right-hand half of the approach in
         right-hand traffic, the left-hand half in left-hand traffic (Britain, Japan, India...: it lay across the lane

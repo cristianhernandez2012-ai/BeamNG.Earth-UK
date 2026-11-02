@@ -7021,7 +7021,15 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
                     chunks.append({"m": fill_look["m"], "w": 0.0, "tl": fill_look["tl"], "p": fill_look["p"],
                                    "poly": [[round(float(v), 3) for v in q] for q in fill], "n": []})
         import markings as _mk
-        ladder = _mk.style(country, float(np.mean([r[3] for r in roads])) if roads else None).ladder
+        mst = _mk.style(country, float(np.mean([r[3] for r in roads])) if roads else None)
+        ladder = mst.ladder
+        if not mst.junction_zebra:
+            # (the British Isles: no crosswalk or stop line on every arm; the lines each arm's control asks for)
+            crosswalks = []
+            import furniture as _furn
+            for _what, line, w, dash in _furn.junction_markings(roads, own_box, left_hand, signals, country):
+                for piece in (_mk.dashes(line, dash) if dash else [line]):
+                    chunks.append(_chunk(junctions.STOP_LINE, w, piece))
         for cw in crosswalks:                   # crosswalks and stop lines
             mid = 0.5 * (cw["a"] + cw["b"])
             if skin_own(mid[0], mid[1]):
