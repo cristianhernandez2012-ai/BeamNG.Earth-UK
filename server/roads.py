@@ -173,6 +173,7 @@ LANE_CLASSES = {"primary", "secondary", "tertiary", "trunk", "motorway"}
 LINK_M = {1: 6.0, 2: 9.0}
 LINK_LANE_M = 3.7       # a one-lane ramp's lane between its shoulders
 URBAN_ARTERIAL = {"trunk": 13.2}     # primaries in towns are often 2 lanes (Lancaster County's PA-340)
+DOUBLE_YELLOW = {"m": "line_yellow", "tl": 6.4, "p": 2}    # a kerb's waiting restriction (furniture.junction_markings)
 LANE_M = 3.3            # m per lane when counting the lanes a carriageway holds
 LANE_COUNT_TOL = 0.1    # a lane's share a carriageway may lack and still count it: a one-way primary's 6.5 m holds two
                         # 3.25 m lanes, it counted one (6.5 // 3.3): Basildon's dual carriageways, 37 km of them, had
@@ -7035,8 +7036,9 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
             crosswalks = []
             import furniture as _furn
             for _what, line, w, dash in _furn.junction_markings(roads, own_box, left_hand, signals, country):
+                lk = DOUBLE_YELLOW if _what == _furn.DY else junctions.STOP_LINE
                 for piece in (_mk.dashes(line, dash) if dash else [line]):
-                    chunks.append(_chunk(junctions.STOP_LINE, w, piece))
+                    chunks.append(_chunk(lk, w, piece))
             # (and the pedestrian crossings OpenStreetMap maps: zebras, signalled crossings, their zig-zags)
             import ukcrossings
             for look_, line, w, dash in ukcrossings.marks(roads, crossings, own_box, left_hand,

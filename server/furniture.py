@@ -714,6 +714,19 @@ TRIANGLE_W = 0.15
 TRIANGLE_BACK_M = 2.0
 
 
+# Double yellow lines (TSRGD 2016 diagram 1018.1: two 100 mm lines 100 mm apart, by the kerb) along both kerbs of a
+# town junction's arms, DY_LEN_M from the corner: the Highway Code's rule 243 (no parking within 10 m of a junction),
+# where councils paint them as a matter of course (the user, Basildon 2026-11-03: "ni la doble amarilla"). The
+# restrictions along whole streets are not in the map data the server reads (OSM parking:*): not drawn.
+DY = "dy"
+DY_W = 0.1
+DY_GAP = 0.1
+DY_KERB_M = 0.25            # m from the carriageway's edge to the outer line's centre
+DY_LEN_M = 10.0
+DY_CLASSES = {"residential", "unclassified", "living_street", "tertiary", "secondary", "primary"}
+DY_CORNER_M = 4.0           # m past the widest arm's edge the kerb starts (the corner's return)
+
+
 def junction_markings(roads, box, left_hand=False, signals=None, country=None):
     """[(kind, (k, 3) line, width, dashes or None)] of the junctions in box (junction_props' junctions: the ones it
     gives signs or signals): kind G_YIELD (diagram 1003: two broken lines), G_SIGNAL or G_STOP (one solid line).
@@ -730,10 +743,24 @@ def junction_markings(roads, box, left_hand=False, signals=None, country=None):
         p = arms[0][3]
         if not _owns(box, p[0], p[1]):
             continue
+        wide = max(a[1].width for a in arms) / 2
+        if not on_ring:
+            for arm in arms:
+                spec = arm[1]
+                if spec.cls not in DY_CLASSES or (len(arm) >= 6 and arm[5] < wide + DY_CORNER_M + DY_LEN_M):
+                    continue
+                u, c = np.asarray(arm[2], np.float64), np.asarray(arm[3], np.float64)
+                n = np.array([-u[1], u[0]])
+                z = float(c[2]) if len(c) > 2 else 0.0
+                t0 = wide + DY_CORNER_M
+                for side in (1, -1):
+                    for off in (spec.width / 2 - DY_KERB_M, spec.width / 2 - DY_KERB_M - DY_W - DY_GAP):
+                        a = c[:2] + u * t0 + n * side * off
+                        b = c[:2] + u * (t0 + DY_LEN_M) + n * side * off
+                        out.append((DY, np.array([[a[0], a[1], z], [b[0], b[1], z]]), DY_W, None))
         put = junction_controls(arms, k, link_ok, ring, signals, country)
         if not put:
             continue
-        wide = max(a[1].width for a in arms) / 2
         for arm, what in put:
             if _outbound(arm):
                 continue
