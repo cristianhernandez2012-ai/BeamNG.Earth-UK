@@ -490,6 +490,119 @@ def junction_spot(c, u, what, wide, half, lines, left_hand=False):
 
 
 NOENTRY_CLASSES = {"residential", "unclassified", "tertiary", "secondary", "primary", "living_street", "service"}
+# The British Isles' signs from the Department for Transport's images (tools/build_uk_signs.py, the mod's
+# vienna_convention_speed_signs.lua M.UK): group "uk<TSRGD 2016 diagram>", the row's height the faces' model height
+# (scale 1). 616 NO ENTRY, 610 KEEP LEFT, 816 NO THROUGH ROAD.
+UK_SIGNS = ("616", "610", "816")
+UK_SIGN_H = 2.47
+DEAD_END_CLASSES = {"residential", "unclassified", "living_street"}
+DEAD_END_MIN_M = 30.0       # a cul-de-sac this long at least gets the sign (not a stub)
+DEAD_END_MAX_M = 400.0      # followed this far through plain joints (two roads meeting); a fork ends the search
+NOSE_GAP_M = 1.5            # m between a splitter island's two carriageways' edges where its KEEP LEFT stands
+NOSE_MAX_M = 40.0
+
+
+def uk_group(diagram):
+    return "uk" + diagram
+
+
+def _road_index(roads):
+    return {fid: np.asarray(pts, np.float64) for fid, _spec, pts, _lon in roads}
+
+
+def _along(pts, from_start, s):
+    """The point s m along pts from its start (from_start) or its end."""
+    p = pts[:, :2] if from_start else pts[::-1, :2]
+    d = np.r_[0.0, np.cumsum(np.hypot(*np.diff(p, axis=0).T))]
+    s = min(max(s, 0.0), float(d[-1]))
+    return np.array([np.interp(s, d, p[:, 0]), np.interp(s, d, p[:, 1])])
+
+
+def _dead_end(junctions, start_key, fid, max_m=DEAD_END_MAX_M):
+    """Does road fid, entered at junction start_key, lead (through plain two-road joints) to an end nothing else
+    meets? (length m of the cul-de-sac or None)"""
+    by_fid = {}
+    for k, arms in junctions.items():
+        for a in arms:
+            by_fid.setdefault(a[0], []).append((k, a))
+    total, key, cur, seen = 0.0, start_key, fid, set()
+    while cur not in seen:
+        seen.add(cur)
+        ends = by_fid.get(cur, ())
+        far = [(k, a) for k, a in ends if k != key]
+        if not far:
+            return None
+        k2, a2 = far[0]
+        total += float(a2[5]) if len(a2) >= 6 else 0.0
+        if total > max_m:
+            return None
+        arms2 = junctions.get(k2, ())
+        if len(arms2) == 1:
+            return total
+        if len(arms2) != 2:
+            return None
+        nxt = [a for a in arms2 if a[0] != cur]
+        if not nxt or nxt[0][1].cls not in DEAD_END_CLASSES:
+            return None
+        key, cur = k2, nxt[0][0]
+    return None
+
+
+def uk_sign_rows(roads, junctions, box, curb_h=0.15, left_hand=True, lines=(), approaches=()):
+    """Rows of the DfT signs the map implies, junction by junction (the junction_props' town junctions): NO THROUGH
+    ROAD (diagram 816) at the mouth of a two-way minor road that ends in a cul-de-sac DEAD_END_MIN_M or longer, on the
+    near kerb of the drivers turning in, facing them; KEEP LEFT (diagram 610) on the nose of a roundabout's splitter
+    island, where a two-way road parts into its one-way entry and exit lanes (approaches: islands.ring_approaches),
+    facing the drivers coming to it. Faces turn as on the right-hand kerb (junction_spot)."""
+    rows = []
+    x0, y0, x1, y1 = box
+    pts_of = _road_index(roads)
+    for k, arms in junctions.items():
+        p = arms[0][3]
+        if not _owns(box, p[0], p[1]) or len(arms) < 2:
+            continue
+        wide = max(a[1].width for a in arms) / 2
+        # NO THROUGH ROAD
+        if len(arms) >= 3:
+            for arm in arms:
+                spec = arm[1]
+                if spec.cls not in DEAD_END_CLASSES or spec.oneway:
+                    continue
+                L = _dead_end(junctions, k, arm[0])
+                if L is None or L < DEAD_END_MIN_M:
+                    continue
+                u, c = np.asarray(arm[2], np.float64), np.asarray(arm[3], np.float64)
+                left = np.array([-u[1], u[0]])
+                near = left if left_hand else -left          # the near kerb of the drivers turning in (travel +u)
+                q = signal_spot(c, u, near, wide, spec.width / 2, lines)
+                if q is None or not (x0 - 20 <= q[0] < x1 + 20 and y0 - 20 <= q[1] < y1 + 20):
+                    continue
+                face = -prop_side(u, G_STOP, False)
+                rows.append([uk_group("816"), round(float(q[0]), 2), round(float(q[1]), 2),
+                             round(float(c[2] + curb_h), 2), round(_yaw(face[0], face[1]), 1), 1.0, UK_SIGN_H, 0.0])
+        # KEEP LEFT on a splitter island's nose
+        one = [a for a in arms if a[1].oneway and a[0] in approaches]
+        two = [a for a in arms if not a[1].oneway]
+        if len(arms) == 3 and len(one) == 2 and len(two) == 1:
+            pa, pb = pts_of.get(one[0][0]), pts_of.get(one[1][0])
+            if pa is None or pb is None:
+                continue
+            half = (one[0][1].width + one[1][1].width) / 2
+            spot = None
+            for s in np.arange(2.0, NOSE_MAX_M, 1.0):
+                qa = _along(pa, bool(one[0][4]), s)
+                qb = _along(pb, bool(one[1][4]), s)
+                if float(np.hypot(*(qa - qb))) - half >= NOSE_GAP_M:
+                    spot = (qa + qb) / 2
+                    break
+            if spot is None or not (x0 - 20 <= spot[0] < x1 + 20 and y0 - 20 <= spot[1] < y1 + 20):
+                continue
+            # (the drivers coming to the island come in along the two-way arm: that arm's sign yaw)
+            face = prop_side(np.asarray(two[0][2], np.float64), G_STOP, False)
+            c = np.asarray(arms[0][3], np.float64)
+            rows.append([uk_group("610"), round(float(spot[0]), 2), round(float(spot[1]), 2),
+                         round(float(c[2] + curb_h), 2), round(_yaw(face[0], face[1]), 1), 1.0, UK_SIGN_H, 0.0])
+    return rows
 
 
 def _inbound(a):
@@ -500,7 +613,7 @@ def _inbound(a):
     return not _outbound(a)
 
 
-def _noentry_rows(arms, curb_h, lines, box, skip=()):
+def _noentry_rows(arms, curb_h, lines, box, skip=(), uk=False):
     """The NO ENTRY pair (TSRGD 2016 diagram 616, a sign on each side) at the exit end of a one-way road, where it comes
     into a junction (_inbound), facing the drivers who would turn into it; not on a divided road's carriageways
     (spec.median: the central reservation's keep-left signs, not these), on links, nor on skip's roads (a roundabout's
@@ -522,8 +635,12 @@ def _noentry_rows(arms, curb_h, lines, box, skip=()):
             q = signal_spot(c, u, side, wide, spec.width / 2, lines)
             if q is None or not (x0 - 20 <= q[0] < x1 + 20 and y0 - 20 <= q[1] < y1 + 20):
                 continue
-            rows.append([G_NOENTRY, round(float(q[0]), 2), round(float(q[1]), 2), round(float(c[2] + curb_h), 2),
-                         round(yaw, 1), 1.0, 3.0, 0.0])
+            if uk:
+                rows.append([uk_group("616"), round(float(q[0]), 2), round(float(q[1]), 2),
+                             round(float(c[2] + curb_h), 2), round(yaw, 1), 1.0, UK_SIGN_H, 0.0])
+            else:
+                rows.append([G_NOENTRY, round(float(q[0]), 2), round(float(q[1]), 2), round(float(c[2] + curb_h), 2),
+                             round(yaw, 1), 1.0, 3.0, 0.0])
     return rows
 
 
@@ -554,7 +671,8 @@ def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=N
         if country and str(country).upper() not in NOENTRY_OFF and not on_ring:
             if approaches is None:
                 approaches = islands.ring_approaches(roads, ring) if ring else set()
-            rows.extend(_noentry_rows(arms, curb_h, lines, box, approaches))
+            rows.extend(_noentry_rows(arms, curb_h, lines, box, approaches,
+                                      uk=str(country).upper() in GIVE_WAY_COUNTRIES))
         put = junction_controls(arms, k, link_ok, ring, signals, country)
         if not put:
             continue
@@ -569,6 +687,10 @@ def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=N
             q, yaw = spot
             rows.append([what, round(float(q[0]), 2), round(float(q[1]), 2), round(float(c[2] + curb_h), 2),
                          round(yaw, 1), 1.0, 9.4 if what == G_SIGNAL else 3.0, 0.0])
+    if str(country or "").upper() in GIVE_WAY_COUNTRIES:
+        if approaches is None:
+            approaches = islands.ring_approaches(roads, ring) if ring else set()
+        rows.extend(uk_sign_rows(roads, junctions, box, curb_h, left_hand, lines, approaches))
     return rows
 
 

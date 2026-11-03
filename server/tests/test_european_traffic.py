@@ -170,7 +170,8 @@ class PrioritySignByCountry(unittest.TestCase):
             tee = [arm("maj_n", major_cls, 0, 1), arm("maj_s", major_cls, 0, -1), arm("min_e", "residential", 1, 0)]
             return [r[0] for r in furniture.junction_props(tee, (0, 0, 256, 256), left_hand=True,
                                                            signals=np.zeros((0, 2)), country=country,
-                                                           giveways=giveways)]
+                                                           giveways=giveways)
+                    if r[0] in (furniture.G_YIELD, furniture.G_STOP)]     # (the cul-de-sac's own sign aside)
         self.assertEqual(kinds("primary"), [furniture.G_YIELD], "onto an A road: signed")
         self.assertEqual(kinds("tertiary"), [], "onto a local road: the markings alone")
         self.assertEqual(kinds("tertiary", giveways=np.array([[108.0, 101.0]])), [furniture.G_YIELD],
@@ -188,7 +189,10 @@ class PrioritySignByCountry(unittest.TestCase):
             return (fid, roads.Spec(7.0, "paved", True, cls, oneway, dir=d, median=median), pts, 0.0)
         tee = [arm("n", "tertiary", 0, 1), arm("s", "tertiary", 0, -1), arm("e", "residential", 1, 0, True, -1)]
         rows = furniture.junction_props(tee, (0, 0, 256, 256), left_hand=True, signals=np.zeros((0, 2)), country="GB")
-        ne = [r for r in rows if r[0] == furniture.G_NOENTRY]
+        ne = [r for r in rows if r[0] == furniture.uk_group("616")]
+        self.assertFalse([r for r in rows if r[0] == furniture.G_NOENTRY], "the DfT face in the British Isles")
+        de = furniture.junction_props(tee, (0, 0, 256, 256), signals=np.zeros((0, 2)), country="DE")
+        self.assertEqual(len([r for r in de if r[0] == furniture.G_NOENTRY]), 2, "the stock sign elsewhere")
         self.assertEqual(len(ne), 2, "a pair")
         self.assertTrue(all(r[1] > 100 for r in ne), "on the one-way arm (east)")
         self.assertEqual(sorted(r[2] > 100 for r in ne), [False, True], "one each side")
@@ -196,13 +200,53 @@ class PrioritySignByCountry(unittest.TestCase):
         tee_out = tee[:2] + [arm("e", "residential", 1, 0, True, 1)]
         self.assertFalse([r for r in furniture.junction_props(tee_out, (0, 0, 256, 256), left_hand=True,
                                                                signals=np.zeros((0, 2)), country="GB")
-                          if r[0] == furniture.G_NOENTRY], "one-way away from the junction: drivers may turn in")
+                          if r[0] in (furniture.G_NOENTRY, furniture.uk_group("616"))], "one-way away from the junction: drivers may turn in")
         self.assertFalse([r for r in furniture.junction_props(tee, (0, 0, 256, 256), signals=np.zeros((0, 2)),
                                                                country="US") if r[0] == furniture.G_NOENTRY])
         div = tee[:2] + [arm("e", "residential", 1, 0, True, -1, median=12.0)]
         self.assertFalse([r for r in furniture.junction_props(div, (0, 0, 256, 256), left_hand=True,
                                                                signals=np.zeros((0, 2)), country="GB")
-                          if r[0] == furniture.G_NOENTRY], "a divided road's carriageway: none")
+                          if r[0] in (furniture.G_NOENTRY, furniture.uk_group("616"))], "a divided road's carriageway: none")
+
+    def test_no_through_road_at_a_cul_de_sac(self):
+        """TSRGD diagram 816 at the mouth of a two-way minor road that ends in a cul-de-sac, on the near kerb of the
+        drivers turning in, facing them; not where the road goes on."""
+        def line(fid, cls, pts, oneway=False, d=0):
+            return (fid, roads.Spec(6.0, "paved", True, cls, oneway, dir=d),
+                    np.array([(x, y, 0.0) for x, y in pts]), 0.0)
+        main = [line("m1", "tertiary", [(100, 0), (100, 100)]), line("m2", "tertiary", [(100, 100), (100, 220)])]
+        culdesac = main + [line("c1", "residential", [(100, 100), (160, 100)]),
+                           line("c2", "residential", [(160, 100), (200, 110)])]
+        rows = furniture.junction_props(culdesac, (0, 0, 256, 256), left_hand=True, signals=np.zeros((0, 2)),
+                                        country="GB")
+        ntr = [r for r in rows if r[0] == furniture.uk_group("816")]
+        self.assertEqual(len(ntr), 1)
+        self.assertGreater(ntr[0][1], 100.0, "on the cul-de-sac")
+        self.assertGreater(ntr[0][2], 100.0, "on the near kerb of the drivers turning in (left of eastbound)")
+        self.assertEqual(ntr[0][4], furniture._yaw(0.0, -1.0), "facing them (back to the junction)")
+        through = culdesac + [line("x", "residential", [(200, 110), (200, 0)]), line("y", "tertiary", [(200, 0), (100, 0)])]
+        rows = furniture.junction_props(through, (0, 0, 256, 256), left_hand=True, signals=np.zeros((0, 2)),
+                                        country="GB")
+        self.assertFalse([r for r in rows if r[0] == furniture.uk_group("816")], "the road goes on: none")
+
+    def test_keep_left_on_a_splitter_islands_nose(self):
+        def line(fid, cls, pts, oneway=False, d=0):
+            return (fid, roads.Spec(4.0, "paved", True, cls, oneway, dir=d),
+                    np.array([(x, y, 0.0) for x, y in pts]), 0.0)
+        # a two-way road from the west parts at (100, 100) into an entry (south) and an exit (north) lane
+        arms = [line("w", "tertiary", [(100, 100), (20, 100)]),
+                line("in", "tertiary", [(100, 100), (120, 96), (150, 90)], True, 1),
+                line("out", "tertiary", [(150, 110), (120, 104), (100, 100)], True, 1)]
+        junctions = furniture._arms(arms)
+        rows = furniture.uk_sign_rows(arms, junctions, (0, 0, 256, 256), approaches={"in", "out"})
+        kl = [r for r in rows if r[0] == furniture.uk_group("610")]
+        self.assertEqual(len(kl), 1)
+        self.assertGreater(kl[0][1], 100.0, "on the island, past the parting")
+        self.assertAlmostEqual(kl[0][2], 100.0, delta=0.5, msg="between the two lanes")
+        self.assertEqual(kl[0][4], furniture._yaw(0.0, -1.0) if False else furniture._yaw(*furniture.prop_side(
+            np.array([-1.0, 0.0]), furniture.G_STOP)), "facing the drivers coming from the west")
+        self.assertFalse(furniture.uk_sign_rows(arms, junctions, (0, 0, 256, 256), approaches=set()),
+                         "not a roundabout's lanes: none")
 
     def test_give_way_signed_keeps_roundabouts(self):
         sp = roads.Spec(7.0, "paved", True, "residential", False)

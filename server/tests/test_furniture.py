@@ -275,6 +275,28 @@ class SignAssetsTest(unittest.TestCase):
             self.assertTrue((art / f"sign_speed{n}.dae").exists() and (art / f"sign_speed{n}.png").exists(), n)
 
 
+class UKSignAssetsTest(unittest.TestCase):
+    """The DfT sign set is written in three places (furniture.UK_SIGNS, vienna_convention_speed_signs.lua M.UK,
+    tools/build_uk_signs.py SHAPES) and its faces are generated files: a diagram in one and not another is a sign
+    never placed or a model missing."""
+    ROOT = Path(__file__).resolve().parents[2]
+
+    def test_server_catalog_generator_and_assets_agree(self):
+        lua = (self.ROOT / "mod/beamng_earth/lua/ge/extensions/beamngEarth/vienna_convention_speed_signs.lua"
+               ).read_text(encoding="utf-8")
+        catalog = set(re.findall(r"'(\d+)'", re.search(r"^M\.UK = \{([^}]*)\}", lua, re.M).group(1)))
+        tree = ast.parse((self.ROOT / "tools/build_uk_signs.py").read_text(encoding="utf-8"))
+        shapes = next(ast.literal_eval(s.value) for s in tree.body
+                      if isinstance(s, ast.Assign) and any(getattr(t, "id", "") == "SHAPES" for t in s.targets))
+        self.assertEqual(set(furniture.UK_SIGNS), catalog)
+        self.assertEqual(set(furniture.UK_SIGNS), set(shapes))
+        art = self.ROOT / "mod/beamng_earth/levels/beamng_earth/art/shapes/beamngEarth"
+        mats = (art / "sign_uk.materials.json").read_text(encoding="utf-8")
+        for d in furniture.UK_SIGNS:
+            self.assertTrue((art / f"sign_uk_{d}.dae").exists() and (art / f"sign_uk_{d}.png").exists(), d)
+            self.assertIn(f'"sign_uk_{d}"', mats)
+
+
 class RoundaboutTest(unittest.TestCase):
     def test_no_signals_on_a_ring_entry(self):
         import numpy as np

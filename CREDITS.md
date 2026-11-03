@@ -99,6 +99,14 @@ only, nothing redistributed. Licence notes marked *(verify)* must be re-checked 
 | LiDAR HD | IGN France | buildings, canopy heights | Etalab Open Licence 2.0 | "IGN - LiDAR HD" | planned |
 | Mapillary street-level imagery | Mapillary (Meta) | tuning the city generator against real photos | CC BY-SA 4.0, free API token | "Street-level imagery: Mapillary" | planned (reference) |
 
+## UK traffic sign images (redistributed in the mod)
+
+- The British Isles' traffic signs (`mod/.../art/shapes/beamngEarth/sign_uk_*.png`, made by `tools/build_uk_signs.py`
+  from `tools/uk_signs/`): the Department for Transport's "Traffic signs images"
+  (https://www.gov.uk/guidance/traffic-sign-images). UK traffic sign images © Crown copyright, Department for
+  Transport, used under the Open Government Licence v3.0
+  (https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/).
+
 ## Software and libraries
 
 | Software | Used for | Licence | Status |
