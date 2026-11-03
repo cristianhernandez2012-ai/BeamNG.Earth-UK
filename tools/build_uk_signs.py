@@ -25,7 +25,7 @@ SRC = Path(__file__).resolve().parent / 'uk_signs'
 OUT = kmh.OUT
 SIZE = 1024
 PANEL_PX = kmh.ROUND_SIGN.plate_panel_px     # the visible disc's radius in the texture (the body's plate)
-SHAPES = {'616': 'round', '610': 'round', '816': 'square'}
+SHAPES = {'616': 'round', '610': 'round', '816': 'square', '510': 'triangle'}
 CORNER = 0.08                                 # a square sign's corner radius, a share of its side
 
 
@@ -33,6 +33,8 @@ def face(path, shape):
     """The 1024 px RGBA face of a DfT image: the sign scaled so its outline fills the plate's disc (a square sign
     its inscribed square), everything outside it fully transparent (the material alpha-tests)."""
     src = Image.open(path).convert('RGB')
+    if shape == 'triangle':
+        return _triangle(src)
     w, h = src.size
     side = 2 * PANEL_PX if shape == 'round' else int(2 * PANEL_PX * 0.92)
     sq = min(w, h)
@@ -47,6 +49,24 @@ def face(path, shape):
     out = Image.new('RGBA', (SIZE, SIZE), (255, 255, 255, 0))
     off = (SIZE - side) // 2
     out.paste(src, (off, off), mask)
+    out.putalpha(out.getchannel('A').point(lambda v: 255 if v >= 128 else 0))
+    return out
+
+
+def _triangle(src):
+    """A warning triangle's face: the sign cropped to its outline (the non-white pixels' box), scaled so its base
+    spans the plate's disc width, its point up, centred on the disc; outside the triangle fully transparent."""
+    gray = src.convert('L').point(lambda v: 255 if v < 235 else 0)
+    x0, y0, x1, y1 = gray.getbbox()
+    src = src.crop((x0, y0, x1, y1))
+    w, h = src.size
+    side = 2 * PANEL_PX
+    tw, th = side, int(round(side * h / w))
+    src = src.resize((tw, th), Image.LANCZOS)
+    mask = Image.new('L', (tw, th), 0)
+    ImageDraw.Draw(mask).polygon([(tw / 2, 0), (tw - 1, th - 1), (0, th - 1)], fill=255)
+    out = Image.new('RGBA', (SIZE, SIZE), (255, 255, 255, 0))
+    out.paste(src, ((SIZE - tw) // 2, (SIZE - th) // 2), mask)
     out.putalpha(out.getchannel('A').point(lambda v: 255 if v >= 128 else 0))
     return out
 

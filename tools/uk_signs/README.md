@@ -4,3 +4,6 @@ number (https://www.gov.uk/guidance/traffic-sign-images): 610 KEEP LEFT, 616 NO 
 
 UK traffic sign images © Crown copyright, Department for Transport, used under the Open Government Licence v3.0
 (https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/).
+
+Phase 2 (more images kept for the next signs): 510 ROUNDABOUT (placed), 543 TRAFFIC SIGNALS AHEAD, 512_left BEND TO
+THE LEFT, 513 / 513R DOUBLE BEND first left / first right.

@@ -1,4 +1,34 @@
 {
+  "sign_uk_510": {
+    "name": "sign_uk_510",
+    "mapTo": "sign_uk_510",
+    "class": "Material",
+    "Stages": [
+      {
+        "colorMap": "/levels/beamng_earth/art/shapes/beamngEarth/sign_uk_510.png",
+        "diffuseColor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "specular": [
+          0.5,
+          0.5,
+          0.5,
+          1.0
+        ],
+        "specularPower": 20,
+        "pixelSpecular": true
+      },
+      {},
+      {},
+      {}
+    ],
+    "alphaTest": true,
+    "alphaRef": 127,
+    "doubleSided": false
+  },
   "sign_uk_610": {
     "name": "sign_uk_610",
     "mapTo": "sign_uk_610",

@@ -37,7 +37,7 @@ add(M.NONE, 'sign_speed_none')
 
 -- The British Isles' signs from the Department for Transport's images (tools/build_uk_signs.py; (c) Crown copyright,
 -- Open Government Licence v3.0), faces on the same body: group 'uk<TSRGD diagram>' (server furniture.UK_SIGN)
-M.UK = { '616', '610', '816' }
+M.UK = { '616', '610', '816', '510' }
 for _, d in ipairs(M.UK) do add('uk' .. d, 'sign_uk_' .. d) end
 
 -- trees: trees.lua's module. Its CATALOG and GROUP_MAX_M take the signs' entries.

@@ -575,7 +575,7 @@ class BuildTileTest(unittest.TestCase):
                                   left_hand=True, country="GB", signals=np.zeros((0, 2)))
         self.assertFalse([c for c in chunks if c["m"] == junctions.CROSSWALK["m"]], "no crosswalk")
         dy = [c for c in chunks if c["m"] == roads.DOUBLE_YELLOW["m"] and c["w"] == furniture.DY_W]
-        self.assertEqual(len(dy), 3 * 2 * 2, "double yellow lines along both kerbs of each arm (diagram 1018.1)")
+        self.assertEqual(len(dy), 3 * 2 * 2 if furniture.DY_ON else 0, "double yellow lines (diagram 1018.1)")
         for c in dy:
             p = np.array(c["n"])[:, :2]
             self.assertAlmostEqual(float(np.hypot(*(p[-1] - p[0]))), furniture.DY_LEN_M, delta=0.01)

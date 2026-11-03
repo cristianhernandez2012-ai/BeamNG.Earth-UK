@@ -493,7 +493,7 @@ NOENTRY_CLASSES = {"residential", "unclassified", "tertiary", "secondary", "prim
 # The British Isles' signs from the Department for Transport's images (tools/build_uk_signs.py, the mod's
 # vienna_convention_speed_signs.lua M.UK): group "uk<TSRGD 2016 diagram>", the row's height the faces' model height
 # (scale 1). 616 NO ENTRY, 610 KEEP LEFT, 816 NO THROUGH ROAD.
-UK_SIGNS = ("616", "610", "816")
+UK_SIGNS = ("616", "610", "816", "510")
 UK_SIGN_H = 2.47
 DEAD_END_CLASSES = {"residential", "unclassified", "living_street"}
 DEAD_END_MIN_M = 30.0       # a cul-de-sac this long at least gets the sign (not a stub)
@@ -548,12 +548,24 @@ def _dead_end(junctions, start_key, fid, max_m=DEAD_END_MAX_M):
     return None
 
 
-def uk_sign_rows(roads, junctions, box, curb_h=0.15, left_hand=True, lines=(), approaches=()):
+ROUNDABOUT_AHEAD_M = 60.0    # m before a ring's entry its ROUNDABOUT warning stands (TSM chapter 4: 45-110 m in towns)
+ROUNDABOUT_AHEAD_CLASSES = {"primary", "secondary", "tertiary", "trunk", "unclassified"}
+
+
+def _arc_z(pts, from_start):
+    """(arc m, z) of a road line read from its start (from_start) or its end, for np.interp."""
+    p = np.asarray(pts, np.float64) if from_start else np.asarray(pts, np.float64)[::-1]
+    d = np.r_[0.0, np.cumsum(np.hypot(*np.diff(p[:, :2], axis=0).T))]
+    return d, (p[:, 2] if p.shape[1] > 2 else np.zeros(len(p)))
+
+
+def uk_sign_rows(roads, junctions, box, curb_h=0.15, left_hand=True, lines=(), approaches=(), ring_fids=()):
     """Rows of the DfT signs the map implies, junction by junction (the junction_props' town junctions): NO THROUGH
     ROAD (diagram 816) at the mouth of a two-way minor road that ends in a cul-de-sac DEAD_END_MIN_M or longer, on the
     near kerb of the drivers turning in, facing them; KEEP LEFT (diagram 610) on the nose of a roundabout's splitter
     island, where a two-way road parts into its one-way entry and exit lanes (approaches: islands.ring_approaches),
-    facing the drivers coming to it. Faces turn as on the right-hand kerb (junction_spot)."""
+    facing the drivers coming to it; ROUNDABOUT AHEAD (diagram 510) ROUNDABOUT_AHEAD_M before each entry to a ring
+    (ring_fids), on the near kerb. Faces turn as on the right-hand kerb (junction_spot)."""
     rows = []
     x0, y0, x1, y1 = box
     pts_of = _road_index(roads)
@@ -580,6 +592,28 @@ def uk_sign_rows(roads, junctions, box, curb_h=0.15, left_hand=True, lines=(), a
                 face = -prop_side(u, G_STOP, False)
                 rows.append([uk_group("816"), round(float(q[0]), 2), round(float(q[1]), 2),
                              round(float(c[2] + curb_h), 2), round(_yaw(face[0], face[1]), 1), 1.0, UK_SIGN_H, 0.0])
+        # ROUNDABOUT AHEAD (diagram 510) on each approach to a ring, ROUNDABOUT_AHEAD_M before it
+        if ring_fids and sum(1 for a in arms if a[0] in ring_fids) >= 2:
+            for arm in arms:
+                spec = arm[1]
+                if arm[0] in ring_fids or _outbound(arm) or spec.cls not in ROUNDABOUT_AHEAD_CLASSES:
+                    continue
+                pts = pts_of.get(arm[0])
+                if pts is None or len(pts) < 2 or (len(arm) >= 6 and arm[5] < ROUNDABOUT_AHEAD_M + 5.0):
+                    continue
+                q = _along(pts, bool(arm[4]), ROUNDABOUT_AHEAD_M)
+                q2 = _along(pts, bool(arm[4]), ROUNDABOUT_AHEAD_M + 2.0)
+                ua = (q2 - q) / max(float(np.hypot(*(q2 - q))), 1e-9)      # along the road, away from the ring
+                left_of_travel = np.array([ua[1], -ua[0]])                  # (traffic comes in along -ua)
+                near = left_of_travel if left_hand else -left_of_travel
+                spot = q + near * (spec.width / 2 + 1.2)
+                if not (x0 - 20 <= spot[0] < x1 + 20 and y0 - 20 <= spot[1] < y1 + 20) \
+                        or not _owns(box, spot[0], spot[1]):
+                    continue
+                face = prop_side(ua, G_STOP, False)
+                z = float(np.interp(ROUNDABOUT_AHEAD_M, *_arc_z(pts, bool(arm[4]))))
+                rows.append([uk_group("510"), round(float(spot[0]), 2), round(float(spot[1]), 2),
+                             round(z + curb_h, 2), round(_yaw(face[0], face[1]), 1), 1.0, UK_SIGN_H, 0.0])
         # KEEP LEFT on a splitter island's nose
         one = [a for a in arms if a[1].oneway and a[0] in approaches]
         two = [a for a in arms if not a[1].oneway]
@@ -690,7 +724,7 @@ def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=N
     if str(country or "").upper() in GIVE_WAY_COUNTRIES:
         if approaches is None:
             approaches = islands.ring_approaches(roads, ring) if ring else set()
-        rows.extend(uk_sign_rows(roads, junctions, box, curb_h, left_hand, lines, approaches))
+        rows.extend(uk_sign_rows(roads, junctions, box, curb_h, left_hand, lines, approaches, ring))
     return rows
 
 
@@ -719,6 +753,8 @@ TRIANGLE_BACK_M = 2.0
 # where councils paint them as a matter of course (the user, Basildon 2026-11-03: "ni la doble amarilla"). The
 # restrictions along whole streets are not in the map data the server reads (OSM parking:*): not drawn.
 DY = "dy"
+DY_ON = False               # off: drawn inside the carriageway, not by the kerb, and across curved arms (Basildon,
+                            # 2026-11-03 photo at Great Oaks); kept for a fix that follows the kerb's line
 DY_W = 0.1
 DY_GAP = 0.1
 DY_KERB_M = 0.25            # m from the carriageway's edge to the outer line's centre
@@ -744,7 +780,7 @@ def junction_markings(roads, box, left_hand=False, signals=None, country=None):
         if not _owns(box, p[0], p[1]):
             continue
         wide = max(a[1].width for a in arms) / 2
-        if not on_ring:
+        if DY_ON and not on_ring:
             for arm in arms:
                 spec = arm[1]
                 if spec.cls not in DY_CLASSES or (len(arm) >= 6 and arm[5] < wide + DY_CORNER_M + DY_LEN_M):
