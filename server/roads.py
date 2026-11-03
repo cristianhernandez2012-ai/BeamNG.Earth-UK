@@ -3304,9 +3304,9 @@ def _seg_dist(p, a, b):
     return np.hypot(p[:, None, 0] - q[..., 0], p[:, None, 1] - q[..., 1])
 
 
-def cut_outside(pts, blockers, spacing=2.0):
+def cut_outside(pts, blockers, spacing=2.0, min_len=None):
     """The pieces of a polyline (k, 3) outside every blocker (centreline xy (m, 2), half width): densified
-    to `spacing`, points inside a blocker removed, runs of at least MIN_PIECE_M kept. Pure."""
+    to `spacing`, points inside a blocker removed, runs of at least min_len (MIN_PIECE_M) kept. Pure."""
     if not blockers:
         return [pts]
     d = densify(np.asarray(pts, np.float64), spacing)
@@ -3314,7 +3314,7 @@ def cut_outside(pts, blockers, spacing=2.0):
     fast.require(0, "inside_blockers")      # the Rust test (712 calls a tile set, ~1 s of numpy)
     segs, starts, hws = _blocker_segments(blockers)
     inside = np.asarray(fast._ef.inside_blockers(np.ascontiguousarray(d[:, :2]), segs, starts, hws))
-    return _runs_outside(d, inside)
+    return _runs_outside(d, inside, MIN_PIECE_M if min_len is None else min_len)
 
 
 _BLOCKERS = ()                  # ((blockers list, its segment arrays), ...): the last few lists (a tile alternates
@@ -3361,7 +3361,8 @@ def _on_level(frame, elev, run):
     return [run] if not off.any() else _runs_outside(run, off)
 
 
-def _runs_outside(d, inside):
+def _runs_outside(d, inside, min_len=None):
+    min_len = MIN_PIECE_M if min_len is None else min_len
     out, start = [], None
     for k in range(len(d) + 1):
         if k < len(d) and not inside[k]:
@@ -3369,7 +3370,7 @@ def _runs_outside(d, inside):
                 start = k
         elif start is not None:
             run = d[start:k]
-            if len(run) >= 2 and float(np.sum(np.hypot(*np.diff(run[:, :2], axis=0).T))) >= MIN_PIECE_M:
+            if len(run) >= 2 and float(np.sum(np.hypot(*np.diff(run[:, :2], axis=0).T))) >= min_len:
                 out.append(run)
             start = None
     return out
@@ -7150,7 +7151,12 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
                 # no gravel edge where another carriageway is near: a ramp's gore and a narrow median are paved
                 pieces = [r for pc in pieces for r in cut_outside(pc, decal_blockers, 0.5)]
             for piece in pieces:
-                for run in cut_outside(piece, wb if walk else blockers, 0.5 if walk else 2.0):
+                # (a broken line's mark is kept whole however short: Britain's town lane marks are 1 m, its centre
+                # line's 2 m, and MIN_PIECE_M, meant for slivers of sidewalk, dropped every one of them; a mark the
+                # blockers cut keeps the rule)
+                plen = float(np.sum(np.hypot(*np.diff(np.asarray(piece)[:, :2], axis=0).T))) if len(piece) >= 2 else 0
+                mlen = min(MIN_PIECE_M, plen * 0.95) if (not walk and look["m"].startswith("line")) else None
+                for run in cut_outside(piece, wb if walk else blockers, 0.5 if walk else 2.0, mlen):
                     for c in split(densify(simplify(run))):
                         if len(c) >= 2:
                             chunks.append(_chunk(look, w, c))

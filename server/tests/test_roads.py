@@ -551,6 +551,17 @@ class BuildTileTest(unittest.TestCase):
             back = (M == 0) & (n[:, 2] > 0.5) & (n[:, 2] < 0.95) & ((n[:, :2] @ out[1]) > 0.3)
             self.assertTrue(back.any(), "a sloped back face")
 
+    def test_short_marks_of_a_broken_line_survive_the_roads_around(self):
+        """Britain's town centre line has 2 m marks (lane lines 1 m): every one was dropped as a sliver
+        (MIN_PIECE_M) wherever another road was near (Basildon, 2026-11-03: "las lineas son muy pobres")."""
+        f = features([[(-100, 120), (400, 120)], [(150, 120), (150, 300)]], ["primary", "residential"])
+        chunks = roads.build_tile(FRAME, 0, 0, [f], flat, lambda la, lo: np.ones(np.shape(la), bool), walks=[],
+                                  left_hand=True, country="GB")
+        marks = [c for c in chunks if c["m"] == "line_white" and c["n"]
+                 and abs(np.array(c["n"])[:, 1] - 120).max() < 1.0
+                 and float(np.hypot(*np.diff(np.array(c["n"])[:, :2], axis=0).T).sum()) < 2.5]
+        self.assertGreater(len(marks), 20, "the centre line's 2 m marks along the primary road")
+
     def test_british_junctions_carry_the_give_way_line_not_a_crosswalk(self):
         """In the British Isles a junction's arms carry the line their control asks for (TSRGD diagram 1003 at a
         give-way: two broken lines across the incoming half), no crosswalk on every arm (Basildon, 2026-11-02)."""
