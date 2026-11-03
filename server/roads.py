@@ -174,6 +174,9 @@ LINK_M = {1: 6.0, 2: 9.0}
 LINK_LANE_M = 3.7       # a one-lane ramp's lane between its shoulders
 URBAN_ARTERIAL = {"trunk": 13.2}     # primaries in towns are often 2 lanes (Lancaster County's PA-340)
 LANE_M = 3.3            # m per lane when counting the lanes a carriageway holds
+LANE_COUNT_TOL = 0.1    # a lane's share a carriageway may lack and still count it: a one-way primary's 6.5 m holds two
+                        # 3.25 m lanes, it counted one (6.5 // 3.3): Basildon's dual carriageways, 37 km of them, had
+                        # no lane line and the AI one lane (the user, 2026-11-03: "faltan las lineas de carril")
 # carriageways painted into the drawn ground instead of meshes (surface.photo_roads; the user, 2026-10-22: "I dont love
 # that we are applying a floating road texture over the normal terrain"; it also ended the white diamonds on the
 # Stelvio's hairpins, GitHub #135). BNGE_ROADS_IN_GROUND=0: the carriageway meshes as before
@@ -3476,6 +3479,7 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None):
             out.append(({**GUTTER, "side": ms}, GUTTER["w"], offset_polyline(pts, ms * (w / 2 - GUTTER["w"] / 2))))
     motorway = cls == "motorway"
     lw_ = st.w_motorway if motorway else st.w           # a line's width
+    centre_classes = st.centre_classes or CENTRE_CLASSES     # (the country's: Britain paints unclassified roads too)
 
     def mark(kind_, mat, width, along, pattern=None, side=None):
         """A solid line, or a broken one's dashes (pattern: dash, gap); kind_: "centre", "lane" or "edge"; side: an edge
@@ -3493,7 +3497,7 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None):
     parked = urban and cls in PARKING_CLASSES and not (not spec.oneway and cls in URBAN_ARTERIAL)
     drive, lanes = lane_layout(spec)
     plan = markings.lane_plan(osm, not spec.oneway, drive, lanes, left_hand) \
-        if kind == "paved" and (cls in CENTRE_CLASSES or cls in LANE_CLASSES) else None
+        if kind == "paved" and (cls in centre_classes or cls in LANE_CLASSES) else None
     if plan is not None:
         # the map's lanes: each line where its lanes meet (OpenStreetMap lanes:forward / backward / both_ways,
         # overtaking, change:lanes; research §5)
@@ -3523,7 +3527,7 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None):
                 mark("centre", st.centre, lw_, at(off - sd * d), cpat)
             else:
                 mark("centre", st.centre, lw_, at(off), cpat)
-    if plan is None and kind == "paved" and cls in CENTRE_CLASSES \
+    if plan is None and kind == "paved" and cls in centre_classes \
             and w - (2 * PARKING_M if parked else 0.0) >= st.min_centre_m \
             and not spec.oneway:   # no paint on cobbles (the width between the parking lanes, edge strips included)
         # the centre line (MUTCD 3B.01-02, TSRGD / RMS / IISR centre lines): too narrow a road has none; four lanes or
@@ -4015,7 +4019,7 @@ def lane_layout(spec):
     w, cls = spec.width, spec.cls
     parked = spec.urban and cls in PARKING_CLASSES and not (not spec.oneway and cls in URBAN_ARTERIAL)
     drive = w - ((PARKING_M if spec.oneway else 2 * PARKING_M) if parked else 2 * edge_margin(spec))
-    lanes = int(spec.lanes) if spec.lanes else int(drive // LANE_M)
+    lanes = int(spec.lanes) if spec.lanes else int(drive / LANE_M + LANE_COUNT_TOL)
     return drive, max(1, lanes)
 
 

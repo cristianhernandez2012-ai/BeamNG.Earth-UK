@@ -19,8 +19,8 @@ import fast
 # a broken one; double_gap: the space between the two lines of a double line.
 Style = namedtuple("Style", "centre w w_motorway edge edge_motorway centre_rural centre_urban lane_rural lane_urban "
                             "lane_motorway left_edge double_centre_urban double_gap min_centre_m edge_classes ladder "
-                            "junction_zebra",
-                   defaults=(None, False, True))
+                            "junction_zebra centre_classes",
+                   defaults=(None, False, True, None))
 # junction_zebra: a crosswalk painted across every arm of a town junction (the US, much of Europe). Not in the British
 # Isles: there a junction's arms carry the give-way or stop line its control asks for (furniture.junction_markings:
 # TSRGD 2016 diagrams 1001, 1002.1, 1003) and a crossing is painted only where one is (a zebra, a signalled crossing);
@@ -38,7 +38,10 @@ _CA = _US._replace(centre_rural=(3.0, 6.0), centre_urban=(3.0, 6.0), lane_rural=
 _GB = Style(centre="line_white", w=0.10, w_motorway=0.15, edge=0.15, edge_motorway=0.20,
             centre_rural=(3.0, 6.0), centre_urban=(2.0, 4.0), lane_rural=(2.0, 7.0), lane_urban=(1.0, 5.0),
             lane_motorway=(2.0, 7.0), left_edge=None, double_centre_urban=False, double_gap=0.175, min_centre_m=5.5,
-            junction_zebra=False)
+            junction_zebra=False,
+            # centre lines on unclassified roads too where 5.5 m is clear (TSM chapter 5: a centre line on a road
+            # 5.5 m wide or more; Basildon's 22 km of unclassified roads had none)
+            centre_classes=frozenset({"primary", "secondary", "tertiary", "trunk", "unclassified"}))
 _DE = Style(centre="line_white", w=0.12, w_motorway=0.15, edge=0.12, edge_motorway=0.30,
             centre_rural=(6.0, 12.0), centre_urban=(3.0, 6.0), lane_rural=(6.0, 12.0), lane_urban=(3.0, 6.0),
             lane_motorway=(6.0, 12.0), left_edge=None, double_centre_urban=False, double_gap=0.12, min_centre_m=5.5)
