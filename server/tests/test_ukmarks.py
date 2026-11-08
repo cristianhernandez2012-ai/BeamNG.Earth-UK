@@ -72,6 +72,41 @@ class ArrowTest(unittest.TestCase):
         self.assertIsNone(furniture._lane_turns({"turn:lanes:backward": "left|through"}, arm))
 
 
+class BuswaySideTest(unittest.TestCase):
+    """busway:left / busway:right (the side of the way's drawing direction) and bus:lanes:forward / backward: the
+    kerbside lane of that side a bus lane, its edge the diagram 1049 line, its legend read by its traffic."""
+
+    def roles(self, tags, lh=True, drive=11.1, lanes=3):
+        return sorted((round(o, 2), r) for o, r, _h in markings.lane_plan(tags, True, drive, lanes, left_hand=lh)
+                      if r == "bus")
+
+    def test_left_and_right(self):
+        left = self.roles({"busway:left": "lane"})
+        self.assertEqual(len(left), 1)
+        self.assertGreater(left[0][0], 0, "the left side")
+        right = self.roles({"busway:right": "lane"})
+        self.assertEqual(len(right), 1)
+        self.assertLess(right[0][0], 0, "the right side")
+        self.assertEqual(len(self.roles({"busway:both": "lane"}, lanes=4, drive=13.2)), 2)
+
+    def test_forward_backward(self):
+        # driving on the left the forward lanes are on the left, the kerbside one listed first
+        self.assertGreater(self.roles({"bus:lanes:forward": "designated|no"})[0][0], 0)
+        self.assertLess(self.roles({"bus:lanes:backward": "designated|no"})[0][0], 0)
+        self.assertFalse(self.roles({"bus:lanes:forward": "no|designated"}), "not the kerbside lane")
+
+    def test_one_lane_each_way_splits(self):
+        self.assertEqual(len(self.roles({"busway:left": "lane"}, lanes=2, drive=11.1)), 1, "room: a bus lane added")
+        self.assertFalse(self.roles({"busway:left": "lane"}, lanes=2, drive=7.0), "no room")
+
+    def test_legend_on_a_two_way_road(self):
+        sp = roads.Spec(11.1, "paved", True, "tertiary", False)
+        pts = np.array([(0.0, 0.0, 0.0), (200.0, 0.0, 0.0)])
+        ex = roads.extras(sp, pts, 0.0, True, "GB", {"busway:left": "lane"})
+        leg = np.concatenate([e[2] for e in ex if e[0].get("kind") == "legend"])
+        self.assertTrue((leg[:, 1] > 0).all(), "in the left side's kerbside lane")
+
+
 class LegendTest(unittest.TestCase):
     def test_bus_lane_legend_in_the_bus_lane(self):
         sp = roads.Spec(9.9, "paved", True, "primary", True, dir=1)

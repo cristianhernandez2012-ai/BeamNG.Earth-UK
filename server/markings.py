@@ -244,6 +244,12 @@ def lane_plan(osm, two_way, drive, lanes, left_hand=False):
         fwd = max(1, (lanes or 2) - both - bwd)
     if bwd is None:
         bwd = max(1, (lanes or 2) - both - fwd)
+    bus_f, bus_b = _bus_sides(osm, left_hand)
+    # a direction with a bus lane and one lane counted has two: the bus lane and the general one (where they fit)
+    if bus_f and fwd == 1 and drive / (fwd + bwd + both + 1) >= BUS_MIN_LANE_M:
+        fwd += 1
+    if bus_b and bwd == 1 and drive / (fwd + bwd + both + 1) >= BUS_MIN_LANE_M:
+        bwd += 1
     n = fwd + bwd + both
     lw = drive / max(n, 1)
     # right-hand traffic: the backward lanes on the left of the way's direction (offsets positive), then the turn lane,
@@ -276,12 +282,38 @@ def lane_plan(osm, two_way, drive, lanes, left_hand=False):
         off = c_right - k * lw
         solid = ch_r is not None and len(ch_r) == right_n and _no_change(ch_r[k - 1], ch_r[k])
         out.append((off, "lane", solid))
-    if str(osm.get("busway") or "").lower() in ("lane", "opposite_lane"):
-        # a with-flow bus lane on each side (busway=lane): the kerbside lane of each direction (either side of the way
-        # whichever side traffic drives on: the outermost lanes), its edge the diagram 1049 line
-        bus_offs = ([edge - lw] if left_n >= 2 else []) + ([c_right - (right_n - 1) * lw] if right_n >= 2 else [])
+    if bus_f or bus_b:
+        # a with-flow bus lane: the kerbside lane of its direction (the outermost lane on that direction's side), its
+        # edge the diagram 1049 line
+        bus_l, bus_r = (bus_b, bus_f) if not left_hand else (bus_f, bus_b)
+        bus_offs = ([edge - lw] if bus_l and left_n >= 2 else []) + \
+            ([c_right - (right_n - 1) * lw] if bus_r and right_n >= 2 else [])
         out = [(o, "bus", True) if any(abs(o - b) < 1e-6 for b in bus_offs) else (o, r, h) for o, r, h in out]
     return out
+
+
+BUS_MIN_LANE_M = 2.75       # m: a lane no narrower (a bus lane split off a direction's one lane)
+BUSWAY_VALUES = {"lane", "opposite_lane"}
+
+
+def _bus_sides(osm, left_hand):
+    """(forward, backward): has each direction of a two-way way a kerbside bus lane? busway=lane (both),
+    busway:both / busway:left / busway:right (the side of the way's drawing direction: in right-hand traffic the
+    right side's traffic goes forward, in left-hand traffic the left side's), bus:lanes:forward / backward (its
+    kerbside lane designated)."""
+    def bw(k):
+        return str(osm.get(k) or "").lower() in BUSWAY_VALUES
+    both = bw("busway") or bw("busway:both")
+    left, right = both or bw("busway:left"), both or bw("busway:right")
+    fwd, bwd = (right, left) if not left_hand else (left, right)
+    for key, idx in (("bus:lanes:forward", 0), ("bus:lanes:backward", 1)):
+        v = _vals(osm.get(key))
+        if v and v[-1 if not left_hand else 0] in ("designated", "only"):     # (the kerbside lane: rightmost / leftmost)
+            if idx == 0:
+                fwd = True
+            else:
+                bwd = True
+    return fwd, bwd
 
 
 GORE_MAJOR = {"motorway", "trunk"}

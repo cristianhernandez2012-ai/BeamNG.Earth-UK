@@ -3517,6 +3517,10 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None, junction_end
     # rural Interstate, GitHub #43) and its lanes (OpenStreetMap's count where known)
     parked = urban and cls in PARKING_CLASSES and not (not spec.oneway and cls in URBAN_ARTERIAL)
     drive, lanes = lane_layout(spec)
+    if parked and osm and any(markings._bus_sides(osm, left_hand)):
+        # a bus lane runs along the kerb where a parking lane would: the whole carriageway driven
+        drive = w
+        lanes = int(spec.lanes) if spec.lanes else max(1, int(drive / LANE_M + LANE_COUNT_TOL))
     plan = markings.lane_plan(osm, not spec.oneway, drive, lanes, left_hand) \
         if kind == "paved" and (cls in centre_classes or cls in LANE_CLASSES) else None
     if plan is not None:

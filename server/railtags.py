@@ -174,6 +174,7 @@ LANE_COLUMNS = ("turn:lanes", "turn:lanes:forward", "turn:lanes:backward", "turn
                 "change:lanes:forward", "change:lanes:backward", "placement", "placement:forward", "placement:backward",
                 "lanes:forward", "lanes:backward", "lanes:both_ways", "overtaking", "overtaking:forward",
                 "overtaking:backward", "divider", "lane_markings", "bus:lanes", "busway", "hov:lanes",
+                "busway:left", "busway:right", "busway:both", "bus:lanes:forward", "bus:lanes:backward",
                 "junction")     # (roundabout rings: roads._rings, attrs osm_junction)
 
 
