@@ -51,6 +51,24 @@ class BusLaneTest(unittest.TestCase):
         self.assertNotIn("bus", [r for _o, r, _h in markings.lane_plan({"busway": "lane"}, True, 7.0, 2)],
                          "two lanes: no room for one")
 
+    def test_british_kerbed_main_roads_carry_edge_lines(self):
+        """TSRGD diagram 1012.1 by the kerb on main roads and dual carriageways (TSM chapter 5), on the asphalt past
+        the gutter; none on a residential street, none on a kerbed road elsewhere."""
+        import roads
+        pts = np.array([(0.0, 0.0, 0.0), (200.0, 0.0, 0.0)])
+
+        def edges(sp, country):
+            return [e for e in roads.extras(sp, pts, 0.0, True, country) if e[0].get("kind") == "edge"]
+        dual = roads.Spec(7.0, "paved", True, "tertiary", True, dir=1)
+        self.assertEqual(len(edges(dual, "GB")), 2, "a dual carriageway's half")
+        for e in edges(dual, "GB"):
+            off = abs(float(e[2][0][1]))
+            self.assertAlmostEqual(off, 3.5 - roads.GUTTER["w"] - roads.KERB_EDGE_GAP_M, delta=0.01)
+        self.assertEqual(len(edges(roads.Spec(9.0, "paved", True, "primary", False), "GB")), 2)
+        self.assertFalse(edges(roads.Spec(9.0, "paved", True, "tertiary", False), "GB"), "a two-way town tertiary")
+        self.assertFalse(edges(roads.Spec(7.0, "paved", True, "residential", False), "GB"))
+        self.assertFalse(edges(roads.Spec(9.0, "paved", True, "primary", False), "DE"), "elsewhere: kerb, no line")
+
     def test_drawn_wide_and_solid(self):
         import roads
         sp = roads.Spec(9.9, "paved", True, "primary", True, dir=1)

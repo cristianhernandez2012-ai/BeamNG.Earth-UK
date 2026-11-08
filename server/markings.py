@@ -19,8 +19,10 @@ import fast
 # a broken one; double_gap: the space between the two lines of a double line.
 Style = namedtuple("Style", "centre w w_motorway edge edge_motorway centre_rural centre_urban lane_rural lane_urban "
                             "lane_motorway left_edge double_centre_urban double_gap min_centre_m edge_classes ladder "
-                            "junction_zebra centre_classes",
-                   defaults=(None, False, True, None))
+                            "junction_zebra centre_classes edge_kerbed edge_kerbed_dual",
+                   defaults=(None, False, True, None, frozenset(), frozenset()))
+# edge_kerbed: classes whose kerbed carriageways carry edge lines too (a road with no kerb gets them by edge_classes);
+# edge_kerbed_dual: classes that do where they are a dual carriageway's one-way half
 # junction_zebra: a crosswalk painted across every arm of a town junction (the US, much of Europe). Not in the British
 # Isles: there a junction's arms carry the give-way or stop line its control asks for (furniture.junction_markings:
 # TSRGD 2016 diagrams 1001, 1002.1, 1003) and a crossing is painted only where one is (a zebra, a signalled crossing);
@@ -41,7 +43,12 @@ _GB = Style(centre="line_white", w=0.10, w_motorway=0.15, edge=0.15, edge_motorw
             junction_zebra=False,
             # centre lines on unclassified roads too where 5.5 m is clear (TSM chapter 5: a centre line on a road
             # 5.5 m wide or more; Basildon's 22 km of unclassified roads had none)
-            centre_classes=frozenset({"primary", "secondary", "tertiary", "trunk", "unclassified"}))
+            centre_classes=frozenset({"primary", "secondary", "tertiary", "trunk", "unclassified"}),
+            # edge of carriageway lines (TSRGD 2016 diagram 1012.1) by the kerb too: Traffic Signs Manual chapter 5
+            # (5.6): on main roads, dual carriageways in particular, they mark the edge at night and in rain
+            # (Basildon, 2026-11-08 street photos: Southernhay's dual carriageway, Cranes Farm Road)
+            edge_kerbed=frozenset({"motorway", "trunk", "primary", "secondary"}),
+            edge_kerbed_dual=frozenset({"tertiary"}))
 _DE = Style(centre="line_white", w=0.12, w_motorway=0.15, edge=0.12, edge_motorway=0.30,
             centre_rural=(6.0, 12.0), centre_urban=(3.0, 6.0), lane_rural=(6.0, 12.0), lane_urban=(3.0, 6.0),
             lane_motorway=(6.0, 12.0), left_edge=None, double_centre_urban=False, double_gap=0.12, min_centre_m=5.5)

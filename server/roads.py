@@ -164,6 +164,7 @@ MEASURE_SKIP = {"service"}      # classes not measured between buildings (lots, 
 MEASURE_MAX = 3.0               # a measured carriageway at most this times the class default
 SIDEWALK_CLASSES = {"residential", "tertiary", "secondary", "primary", "unclassified", "living_street"}
 CENTRE_CLASSES = {"primary", "secondary", "tertiary", "trunk"}
+KERB_EDGE_GAP_M = 0.1           # m between the gutter and a kerbed road's edge line (markings.Style.edge_kerbed)
 EDGE_LINE_CLASSES = {"primary", "secondary", "tertiary", "trunk", "motorway"}
 LANE_CLASSES = {"primary", "secondary", "tertiary", "trunk", "motorway"}
 # urban arterials not lined by buildings (roadwidth.py measures those): 4 lanes (Moab's Main Street, US-191,
@@ -3563,7 +3564,10 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None):
             # (u runs from the ribbon's left to its right: the road is on the right of the left side's, so the right
             # side's runs backwards)
             out.append(({**EDGE_DECAL, "side": side}, dw, line if side > 0 else line[::-1].copy()))
-    if kind == "paved" and (not urban or not has_sidewalks(spec)) and cls in (st.edge_classes or EDGE_LINE_CLASSES):
+    kerbed = urban and has_sidewalks(spec)
+    kerbed_edge = kind == "paved" and kerbed and (cls in st.edge_kerbed or (
+        cls in st.edge_kerbed_dual and spec.oneway and bool(getattr(spec, "dir", 0))))
+    if kerbed_edge or (kind == "paved" and not kerbed and cls in (st.edge_classes or EDGE_LINE_CLASSES)):
         # no curb: edge lines
         # the right edge white; a one-way carriageway's left edge yellow where the country says so (MUTCD 3B.09:
         # divided roads, ramps); wider on motorways (TSRGD 1012, RMS: 0.20-0.30 m)
@@ -3571,6 +3575,8 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None):
         travel_left = 1 if getattr(spec, "dir", 0) >= 0 else -1      # (dir < 0: one way against the line)
         for side in (1, -1):
             inset = motorway_shoulder(spec) if rural_motorway(spec) else EDGE_LINE["inset"]
+            if kerbed:
+                inset = max(inset, GUTTER["w"] + KERB_EDGE_GAP_M)       # (on the asphalt, past the gutter)
             mat = st.left_edge if (st.left_edge and spec.oneway and side == travel_left) else "line_white"
             mark("edge", mat, ew, offset_polyline(pts, side * (w / 2 - inset)), side=side)
     return out
