@@ -753,14 +753,69 @@ TRIANGLE_BACK_M = 2.0
 # where councils paint them as a matter of course (the user, Basildon 2026-11-03: "ni la doble amarilla"). The
 # restrictions along whole streets are not in the map data the server reads (OSM parking:*): not drawn.
 DY = "dy"
-DY_ON = False               # off: drawn inside the carriageway, not by the kerb, and across curved arms (Basildon,
-                            # 2026-11-03 photo at Great Oaks); kept for a fix that follows the kerb's line
+DY_ON = True                # each line follows its kerb's own curve (Basildon, 2026-11-03 photo at Great Oaks: straight
+                            # lines along the junction's direction cut across curved arms)
+DY_STEP_M = 1.0             # m between a line's points along the road
 DY_W = 0.1
 DY_GAP = 0.1
 DY_KERB_M = 0.25            # m from the carriageway's edge to the outer line's centre
 DY_LEN_M = 10.0
 DY_CLASSES = {"residential", "unclassified", "living_street", "tertiary", "secondary", "primary"}
 DY_CORNER_M = 4.0           # m past the widest arm's edge the kerb starts (the corner's return)
+
+
+def _kerb_run(pts, from_start, s0, s1, off):
+    """(k, 3) the line off m left of pts (+ left of travel away from the junction), from s0 to s1 m along it from
+    its start (from_start) or its end, following its curve; z the road's. None when shorter than 1 m."""
+    p = np.asarray(pts, np.float64)
+    p = p if from_start else p[::-1]
+    d = np.r_[0.0, np.cumsum(np.hypot(*np.diff(p[:, :2], axis=0).T))]
+    s1 = min(s1, float(d[-1]))
+    if s1 - s0 < 1.0:
+        return None
+    ss = np.linspace(s0, s1, max(2, int(np.ceil((s1 - s0) / DY_STEP_M)) + 1))
+    x, y = np.interp(ss, d, p[:, 0]), np.interp(ss, d, p[:, 1])
+    z = np.interp(ss, d, p[:, 2]) if p.shape[1] > 2 else np.zeros_like(ss)
+    tx, ty = np.gradient(x), np.gradient(y)
+    L = np.maximum(np.hypot(tx, ty), 1e-9)
+    return np.column_stack([x - ty / L * off, y + tx / L * off, z])
+
+
+def _dy_rows(arms, pts_of):
+    """The double yellow lines (diagram 1018.1) along both kerbs of a town junction's arms, DY_LEN_M m from the
+    corner's return, each line following its kerb's curve."""
+    out = []
+    t0 = max(a[1].width for a in arms) / 2 + DY_CORNER_M
+    for arm in arms:
+        spec = arm[1]
+        pts = pts_of.get(arm[0])
+        if spec.cls not in DY_CLASSES or pts is None or len(pts) < 2:
+            continue
+        if len(arm) >= 6 and arm[5] < t0 + DY_LEN_M:
+            continue
+        for side in (1, -1):
+            for off in (spec.width / 2 - DY_KERB_M, spec.width / 2 - DY_KERB_M - DY_W - DY_GAP):
+                ln = _kerb_run(pts, bool(arm[4]), t0, t0 + DY_LEN_M, side * off)
+                if ln is not None and not _on_other(ln, arm[0], arms, pts_of):
+                    out.append((DY, ln, DY_W, None))
+    return out
+
+
+def _on_other(ln, fid, arms, pts_of):
+    """Does line ln (k, 3) run onto another arm's carriageway (an arm meeting at a sharp angle)?"""
+    q = ln[:, :2]
+    for a in arms:
+        pts = pts_of.get(a[0])
+        if a[0] == fid or pts is None or len(pts) < 2:
+            continue
+        p0, p1 = pts[:-1, :2], pts[1:, :2]
+        d = p1 - p0
+        L2 = np.maximum((d * d).sum(1), 1e-12)
+        t = np.clip(((q[:, None, :] - p0[None]) * d[None]).sum(2) / L2[None], 0.0, 1.0)
+        dist = np.hypot(*(p0[None] + t[..., None] * d[None] - q[:, None, :]).transpose(2, 0, 1)).min(1)
+        if (dist < a[1].width / 2).any():
+            return True
+    return False
 
 
 def junction_markings(roads, box, left_hand=False, signals=None, country=None):
@@ -772,28 +827,17 @@ def junction_markings(roads, box, left_hand=False, signals=None, country=None):
     link_ok = _link_check(junctions, signals)
     import islands
     ring = islands.ring_fids(roads)
+    pts_of = _road_index(roads) if DY_ON and country in GIVE_WAY_COUNTRIES else None
     for k, arms in junctions.items():
         on_ring = sum(1 for a in arms if a[0] in ring) >= 2
+        if pts_of is not None and len(arms) >= 3 and not on_ring and _owns(box, arms[0][3][0], arms[0][3][1]):
+            out += _dy_rows(arms, pts_of)
         if len(arms) < 3 or (not on_ring and not _controlled_here(arms, signals)):
             continue
         p = arms[0][3]
         if not _owns(box, p[0], p[1]):
             continue
         wide = max(a[1].width for a in arms) / 2
-        if DY_ON and not on_ring:
-            for arm in arms:
-                spec = arm[1]
-                if spec.cls not in DY_CLASSES or (len(arm) >= 6 and arm[5] < wide + DY_CORNER_M + DY_LEN_M):
-                    continue
-                u, c = np.asarray(arm[2], np.float64), np.asarray(arm[3], np.float64)
-                n = np.array([-u[1], u[0]])
-                z = float(c[2]) if len(c) > 2 else 0.0
-                t0 = wide + DY_CORNER_M
-                for side in (1, -1):
-                    for off in (spec.width / 2 - DY_KERB_M, spec.width / 2 - DY_KERB_M - DY_W - DY_GAP):
-                        a = c[:2] + u * t0 + n * side * off
-                        b = c[:2] + u * (t0 + DY_LEN_M) + n * side * off
-                        out.append((DY, np.array([[a[0], a[1], z], [b[0], b[1], z]]), DY_W, None))
         put = junction_controls(arms, k, link_ok, ring, signals, country)
         if not put:
             continue

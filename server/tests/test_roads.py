@@ -562,6 +562,24 @@ class BuildTileTest(unittest.TestCase):
                  and float(np.hypot(*np.diff(np.array(c["n"])[:, :2], axis=0).T).sum()) < 2.5]
         self.assertGreater(len(marks), 20, "the centre line's 2 m marks along the primary road")
 
+    def test_double_yellow_follows_a_curved_kerb(self):
+        """Diagram 1018.1 by the kerb: on a curved arm every point of each line keeps its distance from the road's
+        centre line (Basildon, 2026-11-03 photo at Great Oaks: straight lines cut across the bend)."""
+        import furniture
+        ang = np.linspace(0, np.pi / 2, 40)
+        bend = np.column_stack([100 + 40 * np.cos(ang) - 40, 40 * np.sin(ang), np.zeros_like(ang)])  # quarter circle
+        class S:
+            cls, width, oneway, dir = "residential", 7.0, False, 0
+        far = np.array([[60.0, 0.0, 0.0], [60.0, -60.0, 0.0]])          # the other arms: away to the south
+        arms = [(1, S, None, bend[0], True, 63.0), (2, S, None, far[0], True, 60.0), (3, S, None, far[0], True, 60.0)]
+        rows = [r for r in furniture._dy_rows(arms, {1: bend, 2: far, 3: far}) if r[1][:, 1].min() > 0.5]
+        self.assertEqual(len(rows), 4, "two lines by each kerb of the bend")
+        for _k, ln, w, _d in rows:
+            r = np.hypot(ln[:, 0] - 60.0, ln[:, 1])
+            self.assertLess(float(r.max() - r.min()), 0.05, "parallel to the kerb all along")
+            self.assertTrue(abs(float(abs(r - 40).max()) - (3.5 - furniture.DY_KERB_M)) < 0.05
+                            or abs(float(abs(r - 40).max()) - (3.5 - furniture.DY_KERB_M - 0.2)) < 0.05)
+
     def test_british_junctions_carry_the_give_way_line_not_a_crosswalk(self):
         """In the British Isles a junction's arms carry the line their control asks for (TSRGD diagram 1003 at a
         give-way: two broken lines across the incoming half), no crosswalk on every arm (Basildon, 2026-11-02)."""
