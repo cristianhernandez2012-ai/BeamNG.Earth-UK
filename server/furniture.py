@@ -818,20 +818,174 @@ def _on_other(ln, fid, arms, pts_of):
     return False
 
 
-def junction_markings(roads, box, left_hand=False, signals=None, country=None):
+# Hatching (TSRGD 2016 diagram 1040: diagonal stripes inside boundary lines, traffic either side going opposite
+# ways) where a two-way road splits into a one-way pair (a roundabout's entry and exit round a splitter island, a dual
+# carriageway's start): between the pair's inner edges from the split on, until the gap is a kerbed island's (the user,
+# Basildon 2026-11-08 street photos at Southernhay's roundabouts).
+HATCH = "hatch"
+HATCH_W = 0.15              # m: boundary lines and stripes
+HATCH_STEP_M = 2.0          # m between stripes along the road
+HATCH_SLANT_M = 1.5         # m a stripe runs along the road from one side to the other (the diagonal)
+HATCH_MIN_GAP_M = 0.6       # m between the inner edges where the stripes start
+HATCH_MAX_GAP_M = 4.0       # m: past this the pair are apart (a kerbed island or verge): no more hatching
+HATCH_MAX_M = 40.0          # m from the split at most
+HATCH_SPLIT_DEG = 70.0      # the pair diverge at less than this
+HATCH_EDGE_IN_M = 0.2       # m inside each carriageway's edge the boundary line runs
+
+
+def _cross2(a, b):
+    return float(a[0] * b[1] - a[1] * b[0])
+
+
+def _ghost_hatch(arms, pts_of):
+    """The hatching (diagram 1040) of a junction where a two-way road meets a one-way pair, one in and one out."""
+    two = [a for a in arms if not a[1].oneway]
+    one = [a for a in arms if a[1].oneway and getattr(a[1], "dir", 0)]
+    if len(arms) != 3 or len(two) != 1 or len(one) != 2 or _outbound(one[0]) == _outbound(one[1]):
+        return []
+    a, b = one
+    if float(np.degrees(np.arccos(np.clip(np.dot(a[2], b[2]), -1, 1)))) > HATCH_SPLIT_DEG:
+        return []
+    pa, pb = pts_of.get(a[0]), pts_of.get(b[0])
+    if pa is None or pb is None:
+        return []
+    pa = (pa if a[4] else pa[::-1])[:, :3]
+    pb = (pb if b[4] else pb[::-1])[:, :3]
+    side = 1.0 if _cross2(a[2], b[2]) > 0 else -1.0       # b lies left of a (+1) or right (-1)
+    ea = _kerb_run(pa, True, 0.0, HATCH_MAX_M, side * (a[1].width / 2 - HATCH_EDGE_IN_M))
+    eb = _kerb_run(pb, True, 0.0, HATCH_MAX_M, -side * (b[1].width / 2 - HATCH_EDGE_IN_M))
+    if ea is None or eb is None:
+        return []
+
+    def nearest(q, line):
+        d = np.hypot(line[:, 0] - q[0], line[:, 1] - q[1])
+        return int(np.argmin(d)), float(d.min())
+    keep_a, keep_b, stripes = [], [], []
+    for i, q in enumerate(ea):
+        j, gap = nearest(q, eb)
+        # the pair's inner edges cross until their centre lines are a carriageway apart: no gap yet
+        if _cross2(a[2], eb[j, :2] - q[:2]) * side <= 0 or gap < HATCH_MIN_GAP_M:
+            if keep_a:
+                break
+            continue
+        if gap > HATCH_MAX_GAP_M:
+            break
+        keep_a.append(q)
+        keep_b.append(eb[j])
+    if len(keep_a) < 2:
+        return []
+    ka, kb = np.array(keep_a), np.array(keep_b)
+    out = [(HATCH, ka, HATCH_W, None), (HATCH, kb, HATCH_W, None)]
+    sa = np.r_[0.0, np.cumsum(np.hypot(*np.diff(ka[:, :2], axis=0).T))]
+    for t in np.arange(HATCH_STEP_M / 2, sa[-1], HATCH_STEP_M):
+        p = np.array([np.interp(t, sa, ka[:, c]) for c in range(3)])
+        t2 = min(t + HATCH_SLANT_M, sa[-1])
+        q = np.array([np.interp(t2, sa, kb[:, c]) for c in range(3)])
+        out.append((HATCH, np.array([p, q]), HATCH_W, None))
+    return out
+
+
+# Lane arrows (TSRGD 2016 diagram 1038 and its variants: ahead, left, right and their combinations) in each lane of a
+# junction's approach where OpenStreetMap's turn:lanes say where the lanes go (the user, Basildon 2026-11-08 street
+# photos at Southernhay's roundabout); nothing is guessed where the map says nothing.
+ARROW = "arrow"
+ARROW_L = 4.5               # m from tail to tip (diagram 1038: 4.5 m where the limit is 40 mph or less)
+ARROW_W = 0.25              # m: the strokes
+ARROW_HEAD_M = 1.0          # m back from the tip a head's barbs reach
+ARROW_HEAD_HALF = 0.35      # m: a barb's reach across
+ARROW_BACK_M = 3.0          # m from the junction's mouth (past its widest arm) to the arrow's tip
+ARROW_TURN_M = 0.7          # m across a turn arrow's bend reaches
+ARROW_TURNS = {"left": -1, "slight_left": -1, "sharp_left": -1, "through": 0, "right": 1, "slight_right": 1,
+               "sharp_right": 1}
+
+
+def _lane_turns(tags, arm):
+    """[set of turns (ARROW_TURNS' -1 / 0 / +1) per lane, left to right in travel] of the traffic arriving at the
+    junction on arm, from its turn:lanes tags; None where the map says nothing (or 'none' everywhere)."""
+    spec = arm[1]
+    if spec.oneway:
+        v = tags.get("turn:lanes")
+    else:   # (arriving at the road's start travels against its geometry: the backward lanes)
+        v = tags.get("turn:lanes:backward" if arm[4] else "turn:lanes:forward")
+    if not v:
+        return None
+    lanes = [{ARROW_TURNS[t.strip()] for t in str(x).split(";") if t.strip() in ARROW_TURNS} for x in str(v).split("|")]
+    return lanes if any(lanes) else None
+
+
+def _turn_arrows(arms, pts_of, tags, left_hand):
+    """The lane arrows (diagram 1038) on each approach of a junction whose lanes OSM's turn:lanes give."""
+    out = []
+    wide = max(a[1].width for a in arms) / 2
+    for arm in arms:
+        spec = arm[1]
+        tg, pts = tags.get(arm[0]), pts_of.get(arm[0])
+        if not tg or pts is None or len(pts) < 2 or _outbound(arm):
+            continue
+        lanes = _lane_turns(tg, arm)
+        if not lanes:
+            continue
+        s_tip = wide + ARROW_BACK_M
+        if len(arm) >= 6 and arm[5] < s_tip + ARROW_L + 2.0:
+            continue
+        tip, tail = _along(pts, bool(arm[4]), s_tip), _along(pts, bool(arm[4]), s_tip + ARROW_L)
+        f = tip - tail
+        f = f / max(float(np.hypot(*f)), 1e-9)                  # travel, towards the junction
+        left = np.array([-f[1], f[0]])
+        n = len(lanes)
+        if spec.oneway:
+            lw = spec.width / n
+            offs = [spec.width / 2 - (i + 0.5) * lw for i in range(n)]
+        else:
+            lw = spec.width / 2 / n
+            offs = [(n - i - 0.5) * lw if left_hand else -(i + 0.5) * lw for i in range(n)]
+        z = float(pts[0][2] if arm[4] else pts[-1][2]) if np.shape(pts)[1] > 2 else 0.0
+        for turns, off in zip(lanes, offs):
+            base = tail + left * off
+            for line in _arrow_strokes(turns, ARROW_L):
+                q = np.array([base + f * y - left * x for x, y in line])
+                out.append((ARROW, np.column_stack([q, np.full(len(q), z)]), ARROW_W, None))
+    return out
+
+
+def _arrow_strokes(turns, L):
+    """[(k, 2) (x right, y ahead) m] the strokes of a lane arrow pointing to turns (-1 left, 0 ahead, +1 right)."""
+    out = []
+    bend = 0.55 * L
+    out.append(np.array([[0.0, 0.0], [0.0, L if 0 in turns else bend]]))
+    for t in sorted(turns):
+        if t == 0:
+            tip, d = np.array([0.0, L]), np.array([0.0, 1.0])
+        else:
+            tip = np.array([t * ARROW_TURN_M * 1.6, L * 0.85])
+            out.append(np.array([[0.0, bend], tip]))
+            d = (tip - np.array([0.0, bend])) / float(np.hypot(*(tip - np.array([0.0, bend]))))
+        side = np.array([d[1], -d[0]])
+        for sd in (1, -1):
+            out.append(np.array([tip, tip - d * ARROW_HEAD_M + side * sd * ARROW_HEAD_HALF]))
+    return out
+
+
+def junction_markings(roads, box, left_hand=False, signals=None, country=None, tags=None):
     """[(kind, (k, 3) line, width, dashes or None)] of the junctions in box (junction_props' junctions: the ones it
     gives signs or signals): kind G_YIELD (diagram 1003: two broken lines), G_SIGNAL or G_STOP (one solid line).
-    dashes: (mark, gap) m. Pure."""
+    dashes: (mark, gap) m. In the British Isles also the double yellow lines (DY), the hatching where a road splits
+    into a one-way pair (HATCH) and the lane arrows OpenStreetMap's turn:lanes give (ARROW; tags: {fid: lane tags}).
+    Pure."""
     out = []
     junctions = _arms(roads)
     link_ok = _link_check(junctions, signals)
     import islands
     ring = islands.ring_fids(roads)
-    pts_of = _road_index(roads) if DY_ON and country in GIVE_WAY_COUNTRIES else None
+    pts_of = _road_index(roads) if country in GIVE_WAY_COUNTRIES else None
     for k, arms in junctions.items():
         on_ring = sum(1 for a in arms if a[0] in ring) >= 2
-        if pts_of is not None and len(arms) >= 3 and not on_ring and _owns(box, arms[0][3][0], arms[0][3][1]):
+        if DY_ON and pts_of is not None and len(arms) >= 3 and not on_ring and _owns(box, arms[0][3][0], arms[0][3][1]):
             out += _dy_rows(arms, pts_of)
+        if pts_of is not None and len(arms) >= 3 and _owns(box, arms[0][3][0], arms[0][3][1]):
+            out += _ghost_hatch(arms, pts_of)
+            if tags:
+                out += _turn_arrows(arms, pts_of, tags, left_hand)
         if len(arms) < 3 or (not on_ring and not _controlled_here(arms, signals)):
             continue
         p = arms[0][3]

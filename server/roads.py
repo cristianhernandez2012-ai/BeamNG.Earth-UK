@@ -3531,6 +3531,13 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None, junction_end
         for off, role, how in plan:
             if role == "bus":               # a bus lane's edge: solid, wide (TSRGD diagram 1049)
                 mark("lane", "line_white", markings.BUS_LINE_W, at(off))
+                if st is markings.STYLES.get("GB") and abs(off) > 1.0:
+                    # its BUS LANE legend (diagram 1048) in the lane's middle, read by its traffic
+                    c = (off + np.sign(off) * drive / 2) / 2
+                    travel = (1 if getattr(spec, "dir", 0) >= 0 else -1) if spec.oneway else \
+                        (1 if (c > 0) == left_hand else -1)
+                    for stroke in markings.legend(pts, c, travel):
+                        mark("legend", "line_white", markings.LEGEND_W, stroke)
             elif role == "lane":
                 mark("lane", "line_white", lw_, at(off), None if how else pat)
             elif role == "twltl":           # solid on the through side, broken on the turn lane's (MUTCD 3B.05)
@@ -7060,7 +7067,8 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
             # (the British Isles: no crosswalk or stop line on every arm; the lines each arm's control asks for)
             crosswalks = []
             import furniture as _furn
-            for _what, line, w, dash in _furn.junction_markings(roads, own_box, left_hand, signals, country):
+            ltags = {fid: t for fid in seen for t in (lane_tags(*seen[fid][:2]),) if t}
+            for _what, line, w, dash in _furn.junction_markings(roads, own_box, left_hand, signals, country, ltags):
                 lk = DOUBLE_YELLOW if _what == _furn.DY else junctions.STOP_LINE
                 for piece in (_mk.dashes(line, dash) if dash else [line]):
                     chunks.append(_chunk(lk, w, piece))

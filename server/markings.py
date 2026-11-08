@@ -95,6 +95,55 @@ def style(country=None, lon=None):
     return _WHITE
 
 
+# The BUS LANE legend (TSRGD 2016 diagram 1048: "BUS" beyond "LANE", read as a driver comes up to it, at a bus lane's
+# start and along it), drawn as strokes of white line: letters LEGEND_H m tall, LEGEND_CHAR_W wide.
+LEGEND_H = 1.6
+LEGEND_CHAR_W = 0.5
+LEGEND_CHAR_GAP = 0.15
+LEGEND_LINE_GAP = 1.0       # m between "LANE" and "BUS"
+LEGEND_W = 0.12             # m: the strokes
+LEGEND_FIRST_M = 15.0       # m into the lane the first legend stands
+LEGEND_EVERY_M = 150.0
+GLYPHS = {                  # strokes, x 0..1 to the right, y 0..1 up (ahead)
+    "B": [[(0, 0), (0, 1), (.75, 1), (1, .85), (1, .62), (.75, .5), (0, .5)],
+          [(.75, .5), (1, .38), (1, .15), (.75, 0), (0, 0)]],
+    "U": [[(0, 1), (0, .15), (.2, 0), (.8, 0), (1, .15), (1, 1)]],
+    "S": [[(1, .85), (.8, 1), (.2, 1), (0, .85), (0, .62), (.2, .5), (.8, .5), (1, .38), (1, .15), (.8, 0), (.2, 0),
+           (0, .15)]],
+    "L": [[(0, 1), (0, 0), (1, 0)]],
+    "A": [[(0, 0), (.5, 1), (1, 0)], [(.22, .4), (.78, .4)]],
+    "N": [[(0, 0), (0, 1), (1, 0), (1, 1)]],
+    "E": [[(1, 1), (0, 1), (0, 0), (1, 0)], [(0, .5), (.75, .5)]],
+}
+
+
+def legend(pts, centre_off, travel, words=("LANE", "BUS")):
+    """[(k, 3) strokes] of a road legend in the lane centre_off m left of pts' geometry, read by traffic going
+    travel (+1 along pts, -1 against): words[0] nearest the driver, each next one beyond; at LEGEND_FIRST_M into
+    the lane and every LEGEND_EVERY_M."""
+    pts = np.asarray(pts, np.float64)
+    if travel < 0:
+        pts, centre_off = pts[::-1], -centre_off
+    d = np.r_[0.0, np.cumsum(np.hypot(*np.diff(pts[:, :2], axis=0).T))]
+    span = len(words) * LEGEND_H + (len(words) - 1) * LEGEND_LINE_GAP
+    out = []
+    for s0 in np.arange(LEGEND_FIRST_M, d[-1] - span - 5.0, LEGEND_EVERY_M):
+        a = np.array([np.interp(s0, d, pts[:, c]) for c in range(3)])
+        b = np.array([np.interp(s0 + span, d, pts[:, c]) for c in range(3)])
+        f = (b - a)[:2] / max(float(np.hypot(*(b - a)[:2])), 1e-9)
+        left = np.array([-f[1], f[0]])
+        base = a[:2] + left * centre_off
+        for k, word in enumerate(words):
+            y0 = k * (LEGEND_H + LEGEND_LINE_GAP)
+            wd = len(word) * LEGEND_CHAR_W + (len(word) - 1) * LEGEND_CHAR_GAP
+            for j, ch in enumerate(word):
+                x0 = -wd / 2 + j * (LEGEND_CHAR_W + LEGEND_CHAR_GAP)
+                for stroke in GLYPHS.get(ch, ()):
+                    q = [base + f * (y0 + y * LEGEND_H) - left * (x0 + x * LEGEND_CHAR_W) for x, y in stroke]
+                    out.append(np.array([[p[0], p[1], a[2]] for p in q]))
+    return out
+
+
 def by_arc(pts, s0, s1):
     """(k, 3) the piece of pts from s0 to s1 m along it (None when under 0.5 m)."""
     pts = np.asarray(pts, np.float64)
