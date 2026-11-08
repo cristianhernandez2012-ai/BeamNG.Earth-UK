@@ -3447,12 +3447,26 @@ def sidewalk_stop(spec, fid, other, ofid):
     return other.width / 2
 
 
-def extras(spec, pts, lon, left_hand=False, country=None, osm=None):
+def _junction_ends(roads):
+    """{fid: (starts at a junction, ends at one)}: road ends where three or more road ends meet (furniture._arms)."""
+    import furniture
+    out = {}
+    for arms in furniture._arms([r for r in roads if r[1] is not None and r[1].kind in BUILT]).values():
+        if len(arms) < 3:
+            continue
+        for a in arms:
+            s, e = out.get(a[0], (False, False))
+            out[a[0]] = (True, e) if a[4] else (s, True)
+    return out
+
+
+def extras(spec, pts, lon, left_hand=False, country=None, osm=None, junction_ends=None):
     """The sidewalk / gutter / marking polylines of one road: [(look dict with m / tl / p, width, pts)].
     pts: its centreline (k, 3) in the anchor frame (a whole ground part: its broken lines' dashes start their cycle at
     its start, so they meet across tiles); lon: its longitude; country: ISO code (markings.style: the country's line
     colours, widths and dash patterns; by longitude when unknown); osm: OpenStreetMap's lane tags of the road
-    (railtags.LANE_COLUMNS: the lines lane by lane, markings.lane_plan). Pure."""
+    (railtags.LANE_COLUMNS: the lines lane by lane, markings.lane_plan); junction_ends: (bool, bool) does pts start /
+    end at a junction (the centre line's hazard warning pattern before it, markings.Style.hazard_urban). Pure."""
     import markings
     out = []
     st = markings.style(country, lon)
@@ -3493,8 +3507,12 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None):
                 look["side"] = side
             out.append((look, width, along))
             return
-        for piece in markings.dashes(along, pattern):
-            out.append(({"m": mat, "tl": max(1.0, pattern[0]), "p": CENTRE["p"], "kind": kind_}, width, piece))
+        hz = st.hazard_urban if urban else st.hazard_rural
+        parts = markings.hazard_split(along, pattern, hz, junction_ends) \
+            if kind_ == "centre" and hz and junction_ends and any(junction_ends) else [(along, pattern)]
+        for part, pat_ in parts:
+            for piece in markings.dashes(part, pat_):
+                out.append(({"m": mat, "tl": max(1.0, pat_[0]), "p": CENTRE["p"], "kind": kind_}, width, piece))
     # the driving width (a town street's parking lanes and a rural road's edge strips left out: three lanes on every
     # rural Interstate, GitHub #43) and its lanes (OpenStreetMap's count where known)
     parked = urban and cls in PARKING_CLASSES and not (not spec.oneway and cls in URBAN_ARTERIAL)
@@ -7104,8 +7122,10 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
         rings={fid for fid, (f, i, sp) in seen.items() if is_ring(f, i)}, no_decal=lot_aisles, exact=wexact)
     chunks.extend(corner_chunks)
     going_on = _going_on(roads)
+    jends = _junction_ends(roads)
     for fid, spec, pts, lon in roads:
-        ex = extras(spec, pts, lon, left_hand, country, lane_tags(*seen[fid][:2]) if fid in seen else None) \
+        ex = extras(spec, pts, lon, left_hand, country, lane_tags(*seen[fid][:2]) if fid in seen else None,
+                    jends.get(fid)) \
             if fid not in jinternal else []    # inside a junction: none
         if not ex:
             continue

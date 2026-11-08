@@ -19,8 +19,10 @@ import fast
 # a broken one; double_gap: the space between the two lines of a double line.
 Style = namedtuple("Style", "centre w w_motorway edge edge_motorway centre_rural centre_urban lane_rural lane_urban "
                             "lane_motorway left_edge double_centre_urban double_gap min_centre_m edge_classes ladder "
-                            "junction_zebra centre_classes edge_kerbed edge_kerbed_dual",
-                   defaults=(None, False, True, None, frozenset(), frozenset()))
+                            "junction_zebra centre_classes edge_kerbed edge_kerbed_dual hazard_urban hazard_rural",
+                   defaults=(None, False, True, None, frozenset(), frozenset(), None, None))
+# hazard_urban / hazard_rural: ((dash, gap) m, length m) of the centre line's hazard warning pattern on a road's last
+# metres before a junction, or None (the plain centre line all along)
 # edge_kerbed: classes whose kerbed carriageways carry edge lines too (a road with no kerb gets them by edge_classes);
 # edge_kerbed_dual: classes that do where they are a dual carriageway's one-way half
 # junction_zebra: a crosswalk painted across every arm of a town junction (the US, much of Europe). Not in the British
@@ -48,7 +50,11 @@ _GB = Style(centre="line_white", w=0.10, w_motorway=0.15, edge=0.15, edge_motorw
             # (5.6): on main roads, dual carriageways in particular, they mark the edge at night and in rain
             # (Basildon, 2026-11-08 street photos: Southernhay's dual carriageway, Cranes Farm Road)
             edge_kerbed=frozenset({"motorway", "trunk", "primary", "secondary"}),
-            edge_kerbed_dual=frozenset({"tertiary"}))
+            edge_kerbed_dual=frozenset({"tertiary"}),
+            # the hazard warning line (diagram 1004: 6 m marks, 3 m gaps; 1004.1 where the limit is 40 mph or less:
+            # 4 m, 2 m) in place of the centre line (diagram 1008) on the approach to a junction (Traffic Signs Manual
+            # chapter 4: the approach length grows with speed; Basildon, 2026-11-08 street photos)
+            hazard_urban=((4.0, 2.0), 30.0), hazard_rural=((6.0, 3.0), 60.0))
 _DE = Style(centre="line_white", w=0.12, w_motorway=0.15, edge=0.12, edge_motorway=0.30,
             centre_rural=(6.0, 12.0), centre_urban=(3.0, 6.0), lane_rural=(6.0, 12.0), lane_urban=(3.0, 6.0),
             lane_motorway=(6.0, 12.0), left_edge=None, double_centre_urban=False, double_gap=0.12, min_centre_m=5.5)
@@ -87,6 +93,30 @@ def style(country=None, lon=None):
     if not c and lon is not None and -170.0 <= float(lon) <= -30.0:
         return _US
     return _WHITE
+
+
+def by_arc(pts, s0, s1):
+    """(k, 3) the piece of pts from s0 to s1 m along it (None when under 0.5 m)."""
+    pts = np.asarray(pts, np.float64)
+    d = np.r_[0.0, np.cumsum(np.hypot(*np.diff(pts[:, :2], axis=0).T))]
+    s0, s1 = max(0.0, s0), min(float(d[-1]), s1)
+    if s1 - s0 < 0.5:
+        return None
+    inner = (d > s0) & (d < s1)
+    ss = np.r_[s0, d[inner], s1]
+    return np.column_stack([np.interp(ss, d, pts[:, c]) for c in range(pts.shape[1])])
+
+
+def hazard_split(pts, pattern, hazard, ends):
+    """[(piece, pattern)] of a broken centre line along pts: its last hazard[1] m before each junction end (ends:
+    (at its start, at its end)) in the hazard pattern hazard[0], the rest in pattern."""
+    pts = np.asarray(pts, np.float64)
+    L = float(np.sum(np.hypot(*np.diff(pts[:, :2], axis=0).T)))
+    h = hazard[1]
+    a = min(h, L / 2) if ends[0] else 0.0
+    b = max(L - h, L / 2) if ends[1] else L
+    out = [(by_arc(pts, 0.0, a), hazard[0]), (by_arc(pts, a, b), pattern), (by_arc(pts, b, L), hazard[0])]
+    return [(p, pt) for p, pt in out if p is not None]
 
 
 def dashes(pts, pattern, phase=0.0):

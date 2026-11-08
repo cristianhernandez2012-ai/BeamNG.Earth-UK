@@ -69,6 +69,27 @@ class BusLaneTest(unittest.TestCase):
         self.assertFalse(edges(roads.Spec(7.0, "paved", True, "residential", False), "GB"))
         self.assertFalse(edges(roads.Spec(9.0, "paved", True, "primary", False), "DE"), "elsewhere: kerb, no line")
 
+    def test_british_hazard_line_before_a_junction(self):
+        """Diagram 1004.1 (4 m marks, 2 m gaps) on a town road's last 30 m before a junction, the centre line
+        (diagram 1008) before that; no junction, no hazard line; elsewhere no hazard line."""
+        import roads
+        pts = np.array([(0.0, 0.0, 0.0), (200.0, 0.0, 0.0)])
+        sp = roads.Spec(12.0, "paved", True, "tertiary", False)
+
+        def centre(country, ends):
+            return [e for e in roads.extras(sp, pts, 0.0, True, country, junction_ends=ends)
+                    if e[0].get("kind") == "centre"]
+        near = [e for e in centre("GB", (False, True)) if e[2][:, 0].min() >= 170.0 - 1e-6]
+        self.assertTrue(near)
+        for e in near:
+            self.assertLessEqual(float(np.ptp(e[2][:, 0])), 4.0 + 1e-6)
+        self.assertGreaterEqual(sum(np.ptp(e[2][:, 0]) for e in near), 18.0, "two thirds paint")
+        far = [e for e in centre("GB", (False, True)) if e[2][:, 0].max() <= 170.0]
+        self.assertLess(sum(np.ptp(e[2][:, 0]) for e in far) / 170.0, 0.5, "the plain centre line before")
+        plain = centre("GB", (False, False))
+        self.assertLess(sum(np.ptp(e[2][:, 0]) for e in plain) / 200.0, 0.5)
+        self.assertEqual(len(centre("DE", (True, True))), len(centre("DE", (False, False))))
+
     def test_drawn_wide_and_solid(self):
         import roads
         sp = roads.Spec(9.9, "paved", True, "primary", True, dir=1)
